@@ -1,0 +1,72 @@
+# Скомпилированные приложения
+*.apk
+*.ap_
+*.aab
+
+# Файлы для ART/Dalvik VM
+*.dex
+
+# Java/Kotlin class-файлы
+*.class
+
+# Сгенерированные папки
+bin/
+gen/
+out/
+release/
+
+# Gradle
+.gradle/
+build/
+*/build/
+
+# Локальная конфигурация (пути к SDK и т.д.)
+local.properties
+
+# Логи
+*.log
+
+# Временные файлы Android Studio
+navigation/
+captures/
+*.hprof
+
+# IntelliJ / Android Studio
+*.iml
+.idea/
+.gradle/
+.idea/*
+# .idea/workspace.xml
+# .idea/tasks.xml
+# .idea/gradle.xml
+# .idea/assetWizardSettings.xml
+# .idea/dictionaries
+# .idea/libraries
+# .idea/caches
+
+# Keystore-файлы (никогда не коммитьте!)
+*.jks
+*.keystore
+*.p12
+*.bks
+
+# Внешние нативные сборки
+.externalNativeBuild
+.cxx/
+
+# Google Services / Firebase
+# google-services.json (раскомментируйте, если нужно скрыть)
+
+# ОС-файлы
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Системы контроля версий
+vcs.xml
+
+# Lint
+lint/intermediates/
+lint/generated/
+lint/outputs/
+lint/tmp/

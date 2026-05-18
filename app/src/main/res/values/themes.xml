@@ -1,0 +1,18 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Base.Theme.Wisp" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/hydrangea_purple</item>
+        <item name="colorPrimaryVariant">@color/hydrangea_lilac</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="colorSecondary">@color/hydrangea_pink</item>
+        <item name="colorSecondaryVariant">@color/hydrangea_peach</item>
+        <item name="colorOnSecondary">@android:color/white</item>
+        <item name="android:windowBackground">@color/background</item>
+        <item name="colorSurface">@color/card_background</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+    </style>
+    <style name="Theme.Wisp" parent="Base.Theme.Wisp">
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">?attr/isLightTheme</item>
+    </style>
+</resources>

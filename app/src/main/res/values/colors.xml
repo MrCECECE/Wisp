@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="hydrangea_pink">#FF8DA1</color>
+    <color name="hydrangea_peach">#FFC2BA</color>
+    <color name="hydrangea_lilac">#FF9CE9</color>
+    <color name="hydrangea_purple">#AD56C4</color>
+    <color name="background">#FDF6F8</color>
+    <color name="card_background">#FFFFFF</color>
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#757575</color>
+    <color name="accent">@color/hydrangea_purple</color>
+    <color name="icon_tint">@color/hydrangea_purple</color>
+    <color name="divider">#E0E0E0</color>
+</resources>
