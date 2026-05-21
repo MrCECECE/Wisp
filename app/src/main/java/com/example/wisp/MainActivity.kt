@@ -18,13 +18,14 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.concurrent.TimeUnit
+import com.example.wisp.model.ConfigItem
+import com.example.wisp.repository.ConfigRepository
+import com.example.wisp.utils.DateUtils
+import com.example.wisp.utils.HtmlParser
+import com.example.wisp.utils.ThemeManager
+import java.net.URLEncoder
 
 class MainActivity : AppCompatActivity() {
-
     private lateinit var webView: WebView
     private lateinit var btnDone: Button
     private lateinit var btnClose: Button
@@ -34,18 +35,29 @@ class MainActivity : AppCompatActivity() {
     private lateinit var listContainer: LinearLayout
     private lateinit var btnAdd: Button
 
+    private val themeManager by lazy { ThemeManager(this) }
+    private val configRepository by lazy { ConfigRepository(this) }
     private val configs = mutableListOf<ConfigItem>()
     private var currentConfig: ConfigItem? = null
     private var currentConfigView: View? = null
-    private val PREFS = "wisp_prefs"
-    private val KEY_THEME = "theme_mode"
-    private val CONFIG_PREFIX = "cfg_"
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        applyTheme()
+        themeManager.applySavedTheme()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        initViews()
+        setupThemeButtons()
+        setupAddButton()
+        setupWebView()
+
+        // 🔥 Загружаем предустановленные конфиги при первом запуске
+        configRepository.loadDefaultsIfNeeded()
+
+        loadConfigs()
+    }
+
+    private fun initViews() {
         webView = findViewById(R.id.webView)
         btnDone = findViewById(R.id.btnDone)
         btnClose = findViewById(R.id.btnClose)
@@ -54,18 +66,11 @@ class MainActivity : AppCompatActivity() {
         btnThemeDark = findViewById(R.id.btnThemeDark)
         listContainer = findViewById(R.id.listContainer)
         btnAdd = findViewById(R.id.btnAdd)
-
-        setupThemeButtons()
-        setupAddButton()
-        setupWebView()
-        loadConfigs()
     }
 
-    // ================= THEMES =================
     private fun setupThemeButtons() {
-        val currentMode = getSavedTheme()
+        val currentMode = themeManager.getSavedTheme()
         updateThemeButtons(currentMode)
-
         btnThemeLight.setOnClickListener { applyAppTheme(AppCompatDelegate.MODE_NIGHT_NO) }
         btnThemeSystem.setOnClickListener { applyAppTheme(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM) }
         btnThemeDark.setOnClickListener { applyAppTheme(AppCompatDelegate.MODE_NIGHT_YES) }
@@ -78,23 +83,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyAppTheme(mode: Int) {
-        AppCompatDelegate.setDefaultNightMode(mode)
-        getPreferences(Context.MODE_PRIVATE).edit().putInt(KEY_THEME, mode).apply()
+        themeManager.applyTheme(mode)
         updateThemeButtons(mode)
     }
 
-    private fun applyTheme() {
-        val mode = getSavedTheme()
-        AppCompatDelegate.setDefaultNightMode(mode)
-    }
-
-    private fun getSavedTheme(): Int =
-        getPreferences(Context.MODE_PRIVATE).getInt(
-            KEY_THEME,
-            AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
-        )
-
-    // ================= ADD CONFIG =================
     private fun setupAddButton() {
         btnAdd.setOnClickListener { showAddDialog() }
     }
@@ -103,7 +95,6 @@ class MainActivity : AppCompatActivity() {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_add_config, null)
         val etName = dialogView.findViewById<EditText>(R.id.editTextName)
         val etUrl = dialogView.findViewById<EditText>(R.id.editTextUrl)
-
         AlertDialog.Builder(this)
             .setTitle("Добавить конфигурацию")
             .setView(dialogView)
@@ -124,57 +115,44 @@ class MainActivity : AppCompatActivity() {
     private fun addConfig(name: String, url: String) {
         val config = ConfigItem(name, url, null, null)
         configs.add(config)
-        saveConfigs()
+        configRepository.saveConfigs(configs)
         renderConfig(config)
     }
 
-    // ================= RENDER NEW CARD =================
     private fun renderConfig(config: ConfigItem) {
         val view = LayoutInflater.from(this).inflate(R.layout.item_config, listContainer, false)
-
         view.findViewById<TextView>(R.id.tvName).text = config.name
-        view.findViewById<TextView>(R.id.tvDate).text = if (config.lastUpdate != null)
-            "Обновлено: ${formatDate(config.lastUpdate!!)}" else "Не обновлено"
-
-        val relativeTime = if (config.lastUpdate != null) getRelativeTime(config.lastUpdate!!) else ""
-        view.findViewById<TextView>(R.id.tvRelativeTime).text = relativeTime
-
+        view.findViewById<TextView>(R.id.tvDate).text = config.lastUpdate?.let { "Обновлено: ${DateUtils.formatDate(it)}" } ?: "Не обновлено"
+        view.findViewById<TextView>(R.id.tvRelativeTime).text = config.lastUpdate?.let { DateUtils.getRelativeTime(it) } ?: ""
         view.tag = config
-
-        // Новые кнопки с иконками
-        view.findViewById<ImageButton>(R.id.btnRefresh).setOnClickListener {
-            openInWebView(config)
-        }
-        view.findViewById<ImageButton>(R.id.btnCopyHtml).setOnClickListener {
-            copyHtmlToClipboard(config)
-        }
-        view.findViewById<ImageButton>(R.id.btnMenu).setOnClickListener {
-            showConfigMenu(config, view)
-        }
-
+        view.findViewById<ImageButton>(R.id.btnRefresh).setOnClickListener { openInWebView(config) }
+        view.findViewById<ImageButton>(R.id.btnCopyHtml).setOnClickListener { copyHtmlToClipboard(config) }
+        view.findViewById<ImageButton>(R.id.btnMenu).setOnClickListener { showConfigMenu(config, view) }
         listContainer.addView(view)
     }
 
     private fun copyHtmlToClipboard(config: ConfigItem) {
-        val raw = config.rawContent
-        if (raw != null) {
+        if (config.rawContent != null) {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("raw_html", raw))
+            clipboard.setPrimaryClip(ClipData.newPlainText("raw_html", config.rawContent))
             Toast.makeText(this, "HTML скопирован", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "HTML не сохранен. Сначала обновите конфиг.", Toast.LENGTH_SHORT).show()
         }
     }
 
-    // ================= WEBVIEW =================
     private fun openInWebView(config: ConfigItem) {
         currentConfig = config
         currentConfigView = listContainer.findViewWithTag<View>(config)
-        var url = config.url
+
+        // 🔥 Авто-прокси: оборачиваем ссылку через Yandex Translate
+        var url = config.url.trim()
         if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
             url = "https://$url"
         }
-        webView.loadUrl(url)
+        val urlToLoad = wrapWithProxy(url)
+
+        webView.loadUrl(urlToLoad)
         webView.visibility = View.VISIBLE
         btnDone.visibility = View.VISIBLE
         btnClose.visibility = View.VISIBLE
@@ -187,37 +165,23 @@ class MainActivity : AppCompatActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.allowContentAccess = true
         webView.settings.allowFileAccess = true
-        webView.settings.userAgentString =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        webView.settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         webView.webViewClient = object : WebViewClient() {
-            override fun onReceivedError(
-                view: WebView?,
-                request: android.webkit.WebResourceRequest?,
-                error: android.webkit.WebResourceError?
-            ) {
+            override fun onReceivedError(view: WebView?, request: android.webkit.WebResourceRequest?, error: android.webkit.WebResourceError?) {
                 super.onReceivedError(view, request, error)
-                val msg = "Ошибка загрузки страницы: ${error?.description}"
-                Log.d("Wisp", msg)
-                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                Log.d("Wisp", "Ошибка загрузки: ${error?.description}")
+                Toast.makeText(this@MainActivity, "Ошибка загрузки страницы", Toast.LENGTH_LONG).show()
             }
-
             @Suppress("DEPRECATION")
-            override fun onReceivedError(
-                view: WebView?,
-                errorCode: Int,
-                description: String?,
-                failingUrl: String?
-            ) {
+            override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                 super.onReceivedError(view, errorCode, description, failingUrl)
-                val msg = "Ошибка загрузки страницы: $description"
-                Log.d("Wisp", msg)
-                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+                Log.d("Wisp", "Ошибка загрузки: $description")
+                Toast.makeText(this@MainActivity, "Ошибка загрузки страницы", Toast.LENGTH_LONG).show()
             }
-
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 view?.evaluateJavascript("(function() { return document.documentElement.outerHTML; })()") { html ->
-                    html?.let { currentConfig?.rawContent = unescapeHtml(it) }
+                    html?.let { currentConfig?.rawContent = HtmlParser.unescapeHtml(it) }
                 }
             }
         }
@@ -228,63 +192,26 @@ class MainActivity : AppCompatActivity() {
         btnClose.setOnClickListener { exitWebView() }
     }
 
-    private fun unescapeHtml(html: String): String {
-        var result = html
-        result = result.replace("\\u003C", "<")
-        result = result.replace("\\u003E", ">")
-        result = result.replace("\\u0022", "\"")
-        result = result.replace("\\u0026", "&")
-        result = result.replace("\\n", "\n")
-        result = result.replace("\\t", "\t")
-        result = result.removeSurrounding("\"")
-        return result
-    }
-
     private fun saveAndCopyPage() {
-        val content = currentConfig?.rawContent
-        if (content == null) {
-            Toast.makeText(this, "Ошибка: страница не загружена. Проверьте подключение к интернету.", Toast.LENGTH_LONG).show()
+        val content = currentConfig?.rawContent ?: run {
+            Toast.makeText(this, "Ошибка: страница не загружена. Проверьте интернет.", Toast.LENGTH_LONG).show()
             return
         }
-        val urls = extractVpnUrls(content)
+        val urls = HtmlParser.extractVpnUrls(content)
         if (urls.isNotEmpty()) {
             val result = urls.joinToString("\n")
             currentConfig?.rawContent = result
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("vpn_urls", result))
-            currentConfig?.lastUpdate = Date()
-            saveConfigs()
-            currentConfigView?.findViewById<TextView>(R.id.tvDate)?.text =
-                "Обновлено: ${formatDate(currentConfig?.lastUpdate!!)}"
-            // Обновляем и относительное время
-            currentConfigView?.findViewById<TextView>(R.id.tvRelativeTime)?.text =
-                getRelativeTime(currentConfig?.lastUpdate!!)
+            currentConfig?.lastUpdate = java.util.Date()
+            configRepository.saveConfigs(configs)
+            currentConfigView?.findViewById<TextView>(R.id.tvDate)?.text = "Обновлено: ${DateUtils.formatDate(currentConfig!!.lastUpdate!!)}"
+            currentConfigView?.findViewById<TextView>(R.id.tvRelativeTime)?.text = DateUtils.getRelativeTime(currentConfig!!.lastUpdate!!)
             exitWebView()
             Toast.makeText(this, "Извлечено ссылок: ${urls.size}", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "VPN ссылки не найдены", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun extractVpnUrls(html: String): List<String> {
-        val urls = mutableSetOf<String>()
-        val preRegex = Regex("<pre[^>]*>(.*?)</pre>", RegexOption.DOT_MATCHES_ALL)
-        val preMatch = preRegex.find(html) ?: return emptyList()
-        val preContent = preMatch.groupValues[1]
-
-        preContent.lines().forEach { line ->
-            val trimmed = line.trim()
-            if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://")) {
-                var clean = trimmed
-                    .replace("&amp;", "&")
-                    .replace("%5C", "")
-                    .replace("%22", "")
-                    .replace("%2C", ",")
-                clean = Regex("headerType=(none[,%]*)", RegexOption.IGNORE_CASE).replace(clean, "headerType=none")
-                urls.add(clean)
-            }
-        }
-        return urls.toList()
     }
 
     private fun exitWebView() {
@@ -295,14 +222,12 @@ class MainActivity : AppCompatActivity() {
         btnAdd.visibility = View.VISIBLE
     }
 
-    // ================= EDIT & MENU =================
     private fun showEditDialog(config: ConfigItem, parentView: View) {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_edit_config, null)
         val etName = dialogView.findViewById<EditText>(R.id.editTextName)
         val etUrl = dialogView.findViewById<EditText>(R.id.editTextUrl)
         etName.setText(config.name)
         etUrl.setText(config.url)
-
         AlertDialog.Builder(this)
             .setTitle("Редактировать")
             .setView(dialogView)
@@ -313,11 +238,9 @@ class MainActivity : AppCompatActivity() {
                     config.name = newName
                     config.url = newUrl
                     parentView.findViewById<TextView>(R.id.tvName).text = newName
-                    saveConfigs()
+                    configRepository.saveConfigs(configs)
                     Toast.makeText(this, "Сохранено", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Заполните все поля", Toast.LENGTH_SHORT).show()
-                }
+                } else Toast.makeText(this, "Заполните все поля", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -338,7 +261,7 @@ class MainActivity : AppCompatActivity() {
                     2 -> {
                         configs.remove(config)
                         listContainer.removeView(parentView)
-                        saveConfigs()
+                        configRepository.saveConfigs(configs)
                         Toast.makeText(this, "Удалено", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -346,70 +269,25 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    // ================= UTILS & PERSISTENCE =================
-    private fun formatDate(date: Date): String =
-        SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(date)
-
-    private fun getRelativeTime(date: Date): String {
-        val now = System.currentTimeMillis()
-        val diff = now - date.time
-
-        val minutes = TimeUnit.MILLISECONDS.toMinutes(diff)
-        val hours = TimeUnit.MILLISECONDS.toHours(diff)
-        val days = TimeUnit.MILLISECONDS.toDays(diff)
-
-        return when {
-            minutes < 1 -> "только что"
-            minutes < 60 -> "$minutes ${plural(minutes, "минуту", "минуты", "минут")} назад"
-            hours < 24 -> "$hours ${plural(hours, "час", "часа", "часов")} назад"
-            days < 7 -> "$days ${plural(days, "день", "дня", "дней")} назад"
-            else -> formatDate(date)
-        }
-    }
-
-    private fun plural(n: Long, one: String, few: String, many: String): String {
-        val mod10 = (n % 10).toInt()
-        val mod100 = (n % 100).toInt()
-        return when {
-            mod100 in 11..14 -> many
-            mod10 == 1 -> one
-            mod10 in 2..4 -> few
-            else -> many
-        }
-    }
-
-    private fun saveConfigs() {
-        val editor = getPreferences(Context.MODE_PRIVATE).edit()
-        editor.putInt("count", configs.size)
-        configs.forEachIndexed { i, c ->
-            editor.putString("${CONFIG_PREFIX}${i}_name", c.name)
-            editor.putString("${CONFIG_PREFIX}${i}_url", c.url)
-            editor.putLong("${CONFIG_PREFIX}${i}_date", c.lastUpdate?.time ?: -1L)
-            editor.putString("${CONFIG_PREFIX}${i}_raw", c.rawContent)
-        }
-        editor.apply()
-    }
-
     private fun loadConfigs() {
-        val prefs = getPreferences(Context.MODE_PRIVATE)
-        val count = prefs.getInt("count", 0)
-        for (i in 0 until count) {
-            val name = prefs.getString("${CONFIG_PREFIX}${i}_name", "") ?: ""
-            val url = prefs.getString("${CONFIG_PREFIX}${i}_url", "") ?: ""
-            val dateVal = prefs.getLong("${CONFIG_PREFIX}${i}_date", -1L)
-            val lastUpdate = if (dateVal != -1L) Date(dateVal) else null
-            val raw = prefs.getString("${CONFIG_PREFIX}${i}_raw", null)
+        val loaded = configRepository.loadConfigs()
+        configs.clear()
+        listContainer.removeAllViews()
+        configs.addAll(loaded)
+        configs.forEach { renderConfig(it) }
+    }
 
-            val config = ConfigItem(name, url, lastUpdate, raw)
-            configs.add(config)
-            renderConfig(config)
+    // ================= PROXY HELPER =================
+    /**
+     * Автоматически оборачивает сырую ссылку через Yandex Translate proxy.
+     * Если ссылка уже проксирована или не является HTTP(S) — возвращает без изменений.
+     */
+    private fun wrapWithProxy(rawUrl: String): String {
+        if (rawUrl.contains("translate.yandex.ru")) return rawUrl
+        if (!rawUrl.startsWith("http://", ignoreCase = true) && !rawUrl.startsWith("https://", ignoreCase = true)) {
+            return rawUrl
         }
+        val encodedUrl = URLEncoder.encode(rawUrl, "UTF-8")
+        return "https://translate.yandex.ru/translate?url=$encodedUrl&lang=en-ru"
     }
 }
-
-data class ConfigItem(
-    var name: String,
-    var url: String,
-    var lastUpdate: Date?,
-    var rawContent: String? = null
-)
