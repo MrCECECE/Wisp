@@ -13,13 +13,16 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.lifecycle.lifecycleScope
 import com.example.wisp.model.ConfigItem
 import com.example.wisp.repository.ConfigRepository
+import com.example.wisp.update.ForegroundUpdateManager
 import com.example.wisp.utils.DateUtils
 import com.example.wisp.utils.HtmlParser
 import com.example.wisp.utils.ThemeManager
@@ -34,7 +37,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnThemeDark: Button
     private lateinit var listContainer: LinearLayout
     private lateinit var btnAdd: Button
+    private lateinit var webViewButtons: LinearLayout
 
+    private lateinit var updateManager: ForegroundUpdateManager
     private val themeManager by lazy { ThemeManager(this) }
     private val configRepository by lazy { ConfigRepository(this) }
     private val configs = mutableListOf<ConfigItem>()
@@ -51,9 +56,18 @@ class MainActivity : AppCompatActivity() {
         setupAddButton()
         setupWebView()
 
-        // 🔥 Загружаем предустановленные конфиги при первом запуске
-        configRepository.loadDefaultsIfNeeded()
+        updateManager = ForegroundUpdateManager(
+            context = this,
+            owner = "MrCECECE",
+            repo = "Wisp",
+            currentVersionCode = BuildConfig.VERSION_CODE
+        )
 
+        updateManager.checkForUpdate { tag, url, changelog ->
+            showUpdateDialog(tag, url, changelog)
+        }
+
+        configRepository.loadDefaultsIfNeeded()
         loadConfigs()
     }
 
@@ -66,6 +80,7 @@ class MainActivity : AppCompatActivity() {
         btnThemeDark = findViewById(R.id.btnThemeDark)
         listContainer = findViewById(R.id.listContainer)
         btnAdd = findViewById(R.id.btnAdd)
+        webViewButtons = findViewById(R.id.webViewButtons)
     }
 
     private fun setupThemeButtons() {
@@ -104,9 +119,7 @@ class MainActivity : AppCompatActivity() {
                 if (url.isNotEmpty()) {
                     if (name.isEmpty()) name = "Конфигурация #${configs.size + 1}"
                     addConfig(name, url)
-                } else {
-                    Toast.makeText(this, "Введите ссылку", Toast.LENGTH_SHORT).show()
-                }
+                } else Toast.makeText(this, "Введите ссылку", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("Отмена", null)
             .show()
@@ -144,40 +157,41 @@ class MainActivity : AppCompatActivity() {
     private fun openInWebView(config: ConfigItem) {
         currentConfig = config
         currentConfigView = listContainer.findViewWithTag<View>(config)
-
-        // 🔥 Авто-прокси: оборачиваем ссылку через Yandex Translate
         var url = config.url.trim()
         if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
             url = "https://$url"
         }
-        val urlToLoad = wrapWithProxy(url)
-
-        webView.loadUrl(urlToLoad)
+        webView.loadUrl(wrapWithProxy(url))
         webView.visibility = View.VISIBLE
-        btnDone.visibility = View.VISIBLE
-        btnClose.visibility = View.VISIBLE
+        webViewButtons.visibility = View.VISIBLE
         listContainer.visibility = View.GONE
         btnAdd.visibility = View.GONE
     }
 
     private fun setupWebView() {
+        // 🔒 БЕЗОПАСНОСТЬ: Отключаем доступ к файловой системе и контенту
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
-        webView.settings.allowContentAccess = true
-        webView.settings.allowFileAccess = true
+        webView.settings.allowFileAccess = false
+        webView.settings.allowContentAccess = false
+        webView.settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         webView.settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+        // ⚡ ПРОИЗВОДИТЕЛЬНОСТЬ
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
         webView.webViewClient = object : WebViewClient() {
             override fun onReceivedError(view: WebView?, request: android.webkit.WebResourceRequest?, error: android.webkit.WebResourceError?) {
                 super.onReceivedError(view, request, error)
-                Log.d("Wisp", "Ошибка загрузки: ${error?.description}")
+                Log.d("Wisp", "WebView Error: ${error?.description}")
                 Toast.makeText(this@MainActivity, "Ошибка загрузки страницы", Toast.LENGTH_LONG).show()
             }
+
             @Suppress("DEPRECATION")
             override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
                 super.onReceivedError(view, errorCode, description, failingUrl)
-                Log.d("Wisp", "Ошибка загрузки: $description")
-                Toast.makeText(this@MainActivity, "Ошибка загрузки страницы", Toast.LENGTH_LONG).show()
             }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 view?.evaluateJavascript("(function() { return document.documentElement.outerHTML; })()") { html ->
@@ -185,9 +199,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        webView.visibility = View.GONE
-        btnDone.visibility = View.GONE
-        btnClose.visibility = View.GONE
+
         btnDone.setOnClickListener { saveAndCopyPage() }
         btnClose.setOnClickListener { exitWebView() }
     }
@@ -216,8 +228,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun exitWebView() {
         webView.visibility = View.GONE
-        btnDone.visibility = View.GONE
-        btnClose.visibility = View.GONE
+        webViewButtons.visibility = View.GONE
         listContainer.visibility = View.VISIBLE
         btnAdd.visibility = View.VISIBLE
     }
@@ -277,11 +288,6 @@ class MainActivity : AppCompatActivity() {
         configs.forEach { renderConfig(it) }
     }
 
-    // ================= PROXY HELPER =================
-    /**
-     * Автоматически оборачивает сырую ссылку через Yandex Translate proxy.
-     * Если ссылка уже проксирована или не является HTTP(S) — возвращает без изменений.
-     */
     private fun wrapWithProxy(rawUrl: String): String {
         if (rawUrl.contains("translate.yandex.ru")) return rawUrl
         if (!rawUrl.startsWith("http://", ignoreCase = true) && !rawUrl.startsWith("https://", ignoreCase = true)) {
@@ -289,5 +295,75 @@ class MainActivity : AppCompatActivity() {
         }
         val encodedUrl = URLEncoder.encode(rawUrl, "UTF-8")
         return "https://translate.yandex.ru/translate?url=$encodedUrl&lang=en-ru"
+    }
+
+    private fun showUpdateDialog(tag: String, url: String, changelog: String) {
+        // ✅ Диалог не показывается, если активность уходит в фон или уничтожается
+        if (isFinishing || isDestroyed) return
+
+        val message = if (changelog.isNotBlank()) changelog else "Исправления и улучшения"
+        AlertDialog.Builder(this)
+            .setTitle("Доступно обновление: $tag")
+            .setMessage(message)
+            .setPositiveButton("Обновить") { _, _ ->
+                val progressText = TextView(this).apply {
+                    text = "Загрузка..."
+                    setPadding(48, 32, 48, 16)
+                }
+                val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    ).apply { setMargins(48, 0, 48, 32) }
+                }
+                val progressLayout = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    addView(progressText)
+                    addView(progressBar)
+                }
+                val downloadDialog = AlertDialog.Builder(this)
+                    .setView(progressLayout)
+                    .setCancelable(false)
+                    .create()
+                downloadDialog.show()
+
+                updateManager.downloadApk(
+                    url = url,
+                    onProgress = { percent ->
+                        progressText.text = if (percent >= 0) "Загрузка: $percent%" else "Загрузка..."
+                    },
+                    onSuccess = { file ->
+                        if (isFinishing || isDestroyed) return@downloadApk
+                        downloadDialog.dismiss()
+                        AlertDialog.Builder(this)
+                            .setTitle("Загрузка завершена")
+                            .setMessage("Нажмите «Установить» для обновления.")
+                            .setPositiveButton("Установить") { _, _ ->
+                                updateManager.installApk(file)
+                                updateManager.clearPending()
+                            }
+                            .setNegativeButton("Отмена") { _, _ -> file.delete() }
+                            .show()
+                    },
+                    onError = { e ->
+                        if (isFinishing || isDestroyed) return@downloadApk
+                        downloadDialog.dismiss()
+                        Toast.makeText(this, "Ошибка: ${e.message}. Попробуйте позже или скачайте вручную с GitHub", Toast.LENGTH_LONG).show()
+                    },
+                    scope = lifecycleScope
+                )
+            }
+            .setNegativeButton("Позже") { dialog, _ -> dialog.dismiss() }
+            .show()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        updateManager.cancelDownload()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        updateManager.onDestroy()
     }
 }
