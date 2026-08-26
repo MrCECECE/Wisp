@@ -69,12 +69,12 @@
                 android:scaleType="centerInside" />
 
             <ImageButton
-                android:id="@+id/btnCopyHtml"
+                android:id="@+id/btnCopyUrls"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_content_copy"
-                android:contentDescription="Скопировать HTML"
+                android:contentDescription="Скопировать ссылки"
                 android:tint="@color/icon_tint"
                 android:scaleType="centerInside" />
 

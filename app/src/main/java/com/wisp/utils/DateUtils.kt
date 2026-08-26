@@ -1,4 +1,4 @@
-package com.example.wisp.utils
+package com.wisp.utils
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

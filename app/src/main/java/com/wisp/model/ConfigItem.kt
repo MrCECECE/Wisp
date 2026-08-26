@@ -1,4 +1,4 @@
-package com.example.wisp.model
+package com.wisp.model
 import java.util.Date
 
 data class ConfigItem(

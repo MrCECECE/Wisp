@@ -10,7 +10,7 @@
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
 
 # Models & JSON
--keep class com.example.wisp.model.** { *; }
+-keep class com.wisp.model.** { *; }
 -keepattributes Signature
 
 # WebView JS Interface (на будущее)

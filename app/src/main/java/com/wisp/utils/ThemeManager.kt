@@ -1,4 +1,4 @@
-package com.example.wisp.utils
+package com.wisp.utils
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
 

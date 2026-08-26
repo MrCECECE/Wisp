@@ -6,6 +6,13 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Позволяет новой версии обнаружить установленную старую на Android 11+.
+         Проверяются release и debug варианты старого пакета. -->
+    <queries>
+        <package android:name="com.example.wisp" />
+        <package android:name="com.example.wisp.debug" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -25,6 +32,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

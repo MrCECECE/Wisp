@@ -1,8 +1,10 @@
-package com.example.wisp
+package com.wisp
 
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -16,17 +18,17 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
-import com.example.wisp.model.ConfigItem
-import com.example.wisp.repository.ConfigRepository
-import com.example.wisp.update.ForegroundUpdateManager
-import com.example.wisp.utils.DateUtils
-import com.example.wisp.utils.HtmlParser
-import com.example.wisp.utils.ThemeManager
-import java.net.URLEncoder
+import com.wisp.model.ConfigItem
+import com.wisp.repository.ConfigRepository
+import com.wisp.update.ForegroundUpdateManager
+import com.wisp.utils.DateUtils
+import com.wisp.utils.HtmlParser
+import com.wisp.utils.ThemeManager
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -38,6 +40,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var listContainer: LinearLayout
     private lateinit var btnAdd: Button
     private lateinit var webViewButtons: LinearLayout
+    private lateinit var btnSettings: Button
+    private lateinit var bannerOldVersion: TextView
+
+    companion object {
+        /** Пакеты предыдущих версий приложения (до переименования пакета) */
+        private val LEGACY_PACKAGES = arrayOf("com.example.wisp", "com.example.wisp.debug")
+    }
 
     private lateinit var updateManager: ForegroundUpdateManager
     private val themeManager by lazy { ThemeManager(this) }
@@ -45,6 +54,13 @@ class MainActivity : AppCompatActivity() {
     private val configs = mutableListOf<ConfigItem>()
     private var currentConfig: ConfigItem? = null
     private var currentConfigView: View? = null
+    private var downloadDialog: AlertDialog? = null
+
+    private val webViewBackCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            exitWebView()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         themeManager.applySavedTheme()
@@ -54,16 +70,21 @@ class MainActivity : AppCompatActivity() {
         initViews()
         setupThemeButtons()
         setupAddButton()
+        setupSettingsButton()
+        checkLegacyInstall()
         setupWebView()
+        onBackPressedDispatcher.addCallback(this, webViewBackCallback)
 
         updateManager = ForegroundUpdateManager(
             context = this,
             owner = "MrCECECE",
             repo = "Wisp",
-            currentVersionCode = BuildConfig.VERSION_CODE
+            currentVersionName = BuildConfig.VERSION_NAME
         )
 
-        updateManager.checkForUpdate { tag, url, changelog ->
+        // APK прошлой установки мог остаться — чистим до новой проверки обновлений
+        updateManager.cleanupOldApk()
+        updateManager.checkForUpdate(lifecycleScope) { tag, url, changelog ->
             showUpdateDialog(tag, url, changelog)
         }
 
@@ -81,6 +102,8 @@ class MainActivity : AppCompatActivity() {
         listContainer = findViewById(R.id.listContainer)
         btnAdd = findViewById(R.id.btnAdd)
         webViewButtons = findViewById(R.id.webViewButtons)
+        btnSettings = findViewById(R.id.btnSettings)
+        bannerOldVersion = findViewById(R.id.bannerOldVersion)
     }
 
     private fun setupThemeButtons() {
@@ -106,6 +129,30 @@ class MainActivity : AppCompatActivity() {
         btnAdd.setOnClickListener { showAddDialog() }
     }
 
+    private fun setupSettingsButton() {
+        btnSettings.setOnClickListener {
+            startActivity(android.content.Intent(this, SettingsActivity::class.java))
+        }
+    }
+
+    /**
+     * Показывает баннер, если на устройстве ещё стоит старая версия.
+     * Проверяются оба варианта старого пакета: release (com.example.wisp)
+     * и debug (com.example.wisp.debug) — у debug-сборок был суффикс .debug
+     */
+    private fun checkLegacyInstall() {
+        val legacyInstalled = LEGACY_PACKAGES.any { pkg ->
+            try {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(pkg, 0)
+                true
+            } catch (_: PackageManager.NameNotFoundException) {
+                false
+            }
+        }
+        if (legacyInstalled) bannerOldVersion.visibility = View.VISIBLE
+    }
+
     private fun showAddDialog() {
         val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_add_config, null)
         val etName = dialogView.findViewById<EditText>(R.id.editTextName)
@@ -117,7 +164,7 @@ class MainActivity : AppCompatActivity() {
                 val url = etUrl.text.toString().trim()
                 var name = etName.text.toString().trim()
                 if (url.isNotEmpty()) {
-                    if (name.isEmpty()) name = "Конфигурация #${configs.size + 1}"
+                    if (name.isEmpty()) name = generateConfigName()
                     addConfig(name, url)
                 } else Toast.makeText(this, "Введите ссылку", Toast.LENGTH_SHORT).show()
             }
@@ -132,31 +179,37 @@ class MainActivity : AppCompatActivity() {
         renderConfig(config)
     }
 
+    private fun generateConfigName(): String {
+        var n = configs.size + 1
+        while (configs.any { it.name == "Конфигурация #$n" }) n++
+        return "Конфигурация #$n"
+    }
+
     private fun renderConfig(config: ConfigItem) {
         val view = LayoutInflater.from(this).inflate(R.layout.item_config, listContainer, false)
         view.findViewById<TextView>(R.id.tvName).text = config.name
         view.findViewById<TextView>(R.id.tvDate).text = config.lastUpdate?.let { "Обновлено: ${DateUtils.formatDate(it)}" } ?: "Не обновлено"
         view.findViewById<TextView>(R.id.tvRelativeTime).text = config.lastUpdate?.let { DateUtils.getRelativeTime(it) } ?: ""
         view.tag = config
-        view.findViewById<ImageButton>(R.id.btnRefresh).setOnClickListener { openInWebView(config) }
-        view.findViewById<ImageButton>(R.id.btnCopyHtml).setOnClickListener { copyHtmlToClipboard(config) }
+        view.findViewById<ImageButton>(R.id.btnRefresh).setOnClickListener { openInWebView(config, view) }
+        view.findViewById<ImageButton>(R.id.btnCopyUrls).setOnClickListener { copyUrlsToClipboard(config) }
         view.findViewById<ImageButton>(R.id.btnMenu).setOnClickListener { showConfigMenu(config, view) }
         listContainer.addView(view)
     }
 
-    private fun copyHtmlToClipboard(config: ConfigItem) {
+    private fun copyUrlsToClipboard(config: ConfigItem) {
         if (config.rawContent != null) {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("raw_html", config.rawContent))
-            Toast.makeText(this, "HTML скопирован", Toast.LENGTH_SHORT).show()
+            clipboard.setPrimaryClip(ClipData.newPlainText("vpn_urls", config.rawContent))
+            Toast.makeText(this, "Ссылки скопированы", Toast.LENGTH_SHORT).show()
         } else {
-            Toast.makeText(this, "HTML не сохранен. Сначала обновите конфиг.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Ссылки не найдены. Сначала обновите конфиг.", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun openInWebView(config: ConfigItem) {
+    private fun openInWebView(config: ConfigItem, rowView: View) {
         currentConfig = config
-        currentConfigView = listContainer.findViewWithTag<View>(config)
+        currentConfigView = rowView
         var url = config.url.trim()
         if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
             url = "https://$url"
@@ -166,6 +219,7 @@ class MainActivity : AppCompatActivity() {
         webViewButtons.visibility = View.VISIBLE
         listContainer.visibility = View.GONE
         btnAdd.visibility = View.GONE
+        webViewBackCallback.isEnabled = true
     }
 
     private fun setupWebView() {
@@ -175,7 +229,8 @@ class MainActivity : AppCompatActivity() {
         webView.settings.allowFileAccess = false
         webView.settings.allowContentAccess = false
         webView.settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
-        webView.settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        webView.settings.userAgentString =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
         // ⚡ ПРОИЗВОДИТЕЛЬНОСТЬ
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
@@ -184,7 +239,11 @@ class MainActivity : AppCompatActivity() {
             override fun onReceivedError(view: WebView?, request: android.webkit.WebResourceRequest?, error: android.webkit.WebResourceError?) {
                 super.onReceivedError(view, request, error)
                 Log.d("Wisp", "WebView Error: ${error?.description}")
-                Toast.makeText(this@MainActivity, "Ошибка загрузки страницы", Toast.LENGTH_LONG).show()
+                // Сообщаем об ошибке только если не загрузился главный фрейм,
+                // а не отдельные ресурсы (иконки, картинки и т.п.)
+                if (request?.isForMainFrame == true) {
+                    Toast.makeText(this@MainActivity, "Ошибка загрузки страницы", Toast.LENGTH_LONG).show()
+                }
             }
 
             @Suppress("DEPRECATION")
@@ -194,8 +253,13 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                // Фиксируем конфиг на момент загрузки: колбэк может прийти позже,
+                // чем пользователь переключится на другой конфиг
+                val loadedConfig = currentConfig ?: return
                 view?.evaluateJavascript("(function() { return document.documentElement.outerHTML; })()") { html ->
-                    html?.let { currentConfig?.rawContent = HtmlParser.unescapeHtml(it) }
+                    if (currentConfig === loadedConfig && html != null) {
+                        loadedConfig.rawContent = HtmlParser.unescapeHtml(html)
+                    }
                 }
             }
         }
@@ -205,20 +269,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveAndCopyPage() {
-        val content = currentConfig?.rawContent ?: run {
+        val config = currentConfig
+        val content = config?.rawContent ?: run {
             Toast.makeText(this, "Ошибка: страница не загружена. Проверьте интернет.", Toast.LENGTH_LONG).show()
             return
         }
         val urls = HtmlParser.extractVpnUrls(content)
         if (urls.isNotEmpty()) {
             val result = urls.joinToString("\n")
-            currentConfig?.rawContent = result
+            config.rawContent = result
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(ClipData.newPlainText("vpn_urls", result))
-            currentConfig?.lastUpdate = java.util.Date()
+            val now = java.util.Date()
+            config.lastUpdate = now
             configRepository.saveConfigs(configs)
-            currentConfigView?.findViewById<TextView>(R.id.tvDate)?.text = "Обновлено: ${DateUtils.formatDate(currentConfig!!.lastUpdate!!)}"
-            currentConfigView?.findViewById<TextView>(R.id.tvRelativeTime)?.text = DateUtils.getRelativeTime(currentConfig!!.lastUpdate!!)
+            currentConfigView?.findViewById<TextView>(R.id.tvDate)?.text = "Обновлено: ${DateUtils.formatDate(now)}"
+            currentConfigView?.findViewById<TextView>(R.id.tvRelativeTime)?.text = DateUtils.getRelativeTime(now)
             exitWebView()
             Toast.makeText(this, "Извлечено ссылок: ${urls.size}", Toast.LENGTH_SHORT).show()
         } else {
@@ -227,10 +293,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun exitWebView() {
+        webView.stopLoading()
         webView.visibility = View.GONE
         webViewButtons.visibility = View.GONE
         listContainer.visibility = View.VISIBLE
         btnAdd.visibility = View.VISIBLE
+        webViewBackCallback.isEnabled = false
     }
 
     private fun showEditDialog(config: ConfigItem, parentView: View) {
@@ -293,7 +361,8 @@ class MainActivity : AppCompatActivity() {
         if (!rawUrl.startsWith("http://", ignoreCase = true) && !rawUrl.startsWith("https://", ignoreCase = true)) {
             return rawUrl
         }
-        val encodedUrl = URLEncoder.encode(rawUrl, "UTF-8")
+        // Uri.encode оставляет допустимые для query символы и не превращает пробел в "+"
+        val encodedUrl = Uri.encode(rawUrl)
         return "https://translate.yandex.ru/translate?url=$encodedUrl&lang=en-ru"
     }
 
@@ -325,6 +394,7 @@ class MainActivity : AppCompatActivity() {
                     .setView(progressLayout)
                     .setCancelable(false)
                     .create()
+                this@MainActivity.downloadDialog = downloadDialog
                 downloadDialog.show()
 
                 updateManager.downloadApk(
@@ -335,12 +405,25 @@ class MainActivity : AppCompatActivity() {
                     onSuccess = { file ->
                         if (isFinishing || isDestroyed) return@downloadApk
                         downloadDialog.dismiss()
+                        this@MainActivity.downloadDialog = null
                         AlertDialog.Builder(this)
                             .setTitle("Загрузка завершена")
                             .setMessage("Нажмите «Установить» для обновления.")
                             .setPositiveButton("Установить") { _, _ ->
-                                updateManager.installApk(file)
-                                updateManager.clearPending()
+                                // Pending чистим только если установка реально запущена;
+                                // при запросе разрешения она остаётся отложенной
+                                if (updateManager.installApk(file)) {
+                                    updateManager.clearPending()
+                                    // Файл НЕ удаляем: установщик читает его асинхронно через
+                                    // FileProvider, удаление здесь — гонка и «Не удалось разобрать
+                                    // пакет». APK удалится при следующем запуске (cleanupOldApk)
+                                } else {
+                                    Toast.makeText(
+                                        this,
+                                        "Разрешите установку и нажмите «Обновить» снова",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
                             }
                             .setNegativeButton("Отмена") { _, _ -> file.delete() }
                             .show()
@@ -348,6 +431,7 @@ class MainActivity : AppCompatActivity() {
                     onError = { e ->
                         if (isFinishing || isDestroyed) return@downloadApk
                         downloadDialog.dismiss()
+                        this@MainActivity.downloadDialog = null
                         Toast.makeText(this, "Ошибка: ${e.message}. Попробуйте позже или скачайте вручную с GitHub", Toast.LENGTH_LONG).show()
                     },
                     scope = lifecycleScope
@@ -359,7 +443,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        // Отменяем загрузку и закрываем диалог прогресса,
+        // иначе он останется висеть в состоянии "Загрузка..."
         updateManager.cancelDownload()
+        downloadDialog?.takeIf { it.isShowing }?.dismiss()
+        downloadDialog = null
     }
 
     override fun onDestroy() {

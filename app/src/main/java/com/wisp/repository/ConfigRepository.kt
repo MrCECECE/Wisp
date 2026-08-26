@@ -1,15 +1,17 @@
-package com.example.wisp.repository
+package com.wisp.repository
 
 import android.content.Context
-import com.example.wisp.R  // ← ДОБАВИТЬ ЭТУ СТРОКУ
-import com.example.wisp.model.ConfigItem
-import java.util.Date
+import com.wisp.R
+import com.wisp.model.ConfigItem
+import org.json.JSONArray
+import org.json.JSONObject
 
 class ConfigRepository(private val context: Context) {
     private val prefs = context.getSharedPreferences("wisp_prefs", Context.MODE_PRIVATE)
     private val CONFIG_PREFIX = "cfg_"
 
     fun saveConfigs(configs: List<ConfigItem>) {
+        val previousCount = prefs.getInt("count", 0)
         prefs.edit().apply {
             putInt("count", configs.size)
             configs.forEachIndexed { i, c ->
@@ -17,6 +19,13 @@ class ConfigRepository(private val context: Context) {
                 putString("${CONFIG_PREFIX}${i}_url", c.url)
                 putLong("${CONFIG_PREFIX}${i}_date", c.lastUpdate?.time ?: -1L)
                 putString("${CONFIG_PREFIX}${i}_raw", c.rawContent)
+            }
+            // Удаляем ключи удалённых конфигов, иначе они копятся вечно
+            for (i in configs.size until previousCount) {
+                remove("${CONFIG_PREFIX}${i}_name")
+                remove("${CONFIG_PREFIX}${i}_url")
+                remove("${CONFIG_PREFIX}${i}_date")
+                remove("${CONFIG_PREFIX}${i}_raw")
             }
             apply()
         }
@@ -28,7 +37,7 @@ class ConfigRepository(private val context: Context) {
             val name = prefs.getString("${CONFIG_PREFIX}${i}_name", "") ?: return@mapNotNull null
             val url = prefs.getString("${CONFIG_PREFIX}${i}_url", "") ?: return@mapNotNull null
             val dateVal = prefs.getLong("${CONFIG_PREFIX}${i}_date", -1L)
-            val lastUpdate = if (dateVal != -1L) Date(dateVal) else null
+            val lastUpdate = if (dateVal != -1L) java.util.Date(dateVal) else null
             val raw = prefs.getString("${CONFIG_PREFIX}${i}_raw", null)
             ConfigItem(name, url, lastUpdate, raw)
         }
@@ -57,17 +66,28 @@ class ConfigRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Поддерживаются форматы:
+     * {"defaults": [{"name": "...", "url": "..."}]} и [{"name": ..., "url": ...}]
+     */
     private fun parseDefaultsJson(json: String): List<ConfigItem> {
         val configs = mutableListOf<ConfigItem>()
-        // Простой парсинг без внешних библиотек
-        val regex = Regex("""\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"url"\s*:\s*"([^"]+)""")
-        regex.findAll(json).forEach { match ->
-            configs.add(ConfigItem(
-                name = match.groupValues[1],
-                url = match.groupValues[2],
-                lastUpdate = null,
-                rawContent = null
-            ))
+        try {
+            val root = try {
+                JSONObject(json).optJSONArray("defaults")
+            } catch (_: Exception) {
+                null // это не объект, возможно top-level массив
+            } ?: JSONArray(json)
+            for (i in 0 until root.length()) {
+                val item = root.optJSONObject(i) ?: continue
+                val name = item.optString("name").trim()
+                val url = item.optString("url").trim()
+                if (name.isNotEmpty() && url.isNotEmpty()) {
+                    configs.add(ConfigItem(name, url, lastUpdate = null, rawContent = null))
+                }
+            }
+        } catch (_: Exception) {
+            // Невалидный JSON -> пустой список дефолтов
         }
         return configs
     }

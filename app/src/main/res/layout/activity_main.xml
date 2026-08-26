@@ -9,18 +9,24 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/colorPrimary"
+        android:gravity="center_vertical"
         android:orientation="horizontal"
         android:padding="8dp">
 
         <TextView
-            android:layout_width="0dp"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:paddingStart="8dp"
             android:text="Wisp"
             android:textColor="@android:color/white"
             android:textSize="18sp"
             android:textStyle="bold" />
+
+        <!-- Прокладка: прижимает кнопки тем и настроек к правому краю -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
 
         <Button
             android:id="@+id/btnThemeLight"
@@ -51,7 +57,30 @@
             android:padding="0dp"
             android:text="🌙"
             android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnSettings"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:minWidth="0dp"
+            android:minHeight="0dp"
+            android:padding="0dp"
+            android:text="⚙️"
+            android:textSize="14sp" />
     </LinearLayout>
+
+    <!-- Баннер о старой версии (показывается, если установлен com.example.wisp) -->
+    <TextView
+        android:id="@+id/bannerOldVersion"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#E65100"
+        android:gravity="center"
+        android:padding="10dp"
+        android:text="⚠️ Обнаружена старая версия Wisp — удалите её и пользуйтесь этой"
+        android:textColor="@android:color/white"
+        android:textSize="13sp"
+        android:visibility="gone" />
 
     <!-- WebView -->
     <WebView
