@@ -5,7 +5,11 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 object DateUtils {
-    fun formatDate(date: Date): String = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(date)
+    // SimpleDateFormat не потокобезопасен; используется только с Main-потока
+    // (все текущие вызовы — из UI и из autoRefreshAllConfigs, выполняемой на Main)
+    private val formatter = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+
+    fun formatDate(date: Date): String = formatter.format(date)
 
     fun getRelativeTime(date: Date): String {
         val now = System.currentTimeMillis()
