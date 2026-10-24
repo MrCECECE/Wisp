@@ -1,8 +1,16 @@
 package com.wisp.utils
 
 import org.json.JSONTokener
+import java.util.LinkedHashSet
 
 object HtmlParser {
+
+    private val PROTOCOLS = listOf(
+        "vless", "trojan", "vmess", "hysteria", "hysteria2", "hy2", "ss", "ssr", "tuic"
+    )
+
+    private val PRE_REGEX = Regex("<pre[^>]*>(.*?)</pre>", RegexOption.DOT_MATCHES_ALL)
+    private val HEADER_NONE_REGEX = Regex("(?i)headerType=none[,%]*(?=&|$)")
 
     /**
      * evaluateJavascript возвращает результат в виде JSON-литерала.
@@ -33,23 +41,34 @@ object HtmlParser {
         return result
     }
 
-    fun extractVpnUrls(html: String): List<String> {
-        val urls = mutableSetOf<String>()
-        val preRegex = Regex("<pre[^>]*>(.*?)</pre>", RegexOption.DOT_MATCHES_ALL)
+    fun extractVpnUrls(text: String): List<String> {
+        val urls = LinkedHashSet<String>()
 
-        preMatches@ for (match in preRegex.findAll(html)) {
-            val preContent = match.groupValues[1]
-            for (line in preContent.lines()) {
+        val sources = if (text.contains("<pre", ignoreCase = true)) {
+            val result = mutableListOf<String>()
+            for (match in PRE_REGEX.findAll(text)) {
+                result.add(match.groupValues[1])
+            }
+            result
+        } else {
+            listOf(text)
+        }
+
+        for (source in sources) {
+            for (line in source.lines()) {
                 val trimmed = line.trim()
-                if (trimmed.startsWith("vless://") || trimmed.startsWith("trojan://")) {
+                if (trimmed.isEmpty()) continue
+                val lower = trimmed.lowercase()
+                val matchesProtocol = PROTOCOLS.any { protocol ->
+                    lower.startsWith("$protocol://")
+                }
+                if (matchesProtocol) {
                     var clean = trimmed
                         .replace("&amp;", "&")
                         .replace("%5C", "")
                         .replace("%22", "")
                         .replace("%2C", ",")
-                    // Артефакты прокси ("none,", "none%") чистим только на границе параметра,
-                    // чтобы не испортить валидное значение посередине URL
-                    clean = Regex("(?i)headerType=none[,%]*(?=&|$)").replace(clean, "headerType=none")
+                    clean = HEADER_NONE_REGEX.replace(clean, "headerType=none")
                     urls.add(clean)
                 }
             }
