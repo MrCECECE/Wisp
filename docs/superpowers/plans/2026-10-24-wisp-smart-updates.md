@@ -1,0 +1,761 @@
+# Wisp: умные обновления и оптимизация — план реализации
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Добавить в Wisp автообновление подписок и приложения только на Wi-Fi, ручной выбор «напрямую / через Яндекс» на мобильном интернете, поддержку всех распространённых протоколов подписок и точечные оптимизации скорости и размера APK — без перехода на KMP.
+
+**Architecture:** Остаёмся в одном Android-модуле `:app` на View-системе. Новый пакет `com.wisp.network` содержит общий `OkHttpClient`, проверку типа сети, быстрый пробный запрос и загрузчик подписок. `MainActivity` слушает `ConnectivityManager.NetworkCallback` в `onStart`/`onStop` и запускает автообновление только на Wi-Fi. Ручное обновление всегда предлагает два пути: прямой и через Яндекс-прокси. `HtmlParser` расширяется до списка протоколов и работает как с HTML, так и с сырым текстом.
+
+**Tech Stack:** Kotlin, Android Views, OkHttp 4.12, Kotlin Coroutines, JUnit 4, OkHttp MockWebServer (только тесты).
+
+**Spec:** `docs/superpowers/specs/2026-10-24-wisp-smart-updates-design.md`
+
+## Global Constraints
+
+- Только Android, один модуль `:app`; KMP, iOS, desktop, Compose Multiplatform не добавлять.
+- Без веток: все коммиты — в текущую ветку.
+- `minSdk 24`, `targetSdk 35`, `compileSdk 37`, AGP 9.4.0, Gradle 9.8.0. Kotlin встроен в AGP 9 — отдельный Kotlin-плагин не добавлять.
+- Release сохраняет `minifyEnabled = true` и `shrinkResources = true`; не выключать.
+- Новые runtime-зависимости не добавлять. Единственная новая зависимость — `mockwebserver` версии 4.12.0 с областью `testImplementation`.
+- Автоматические проверки работают только в foreground (`onStart`–`onStop`).
+- На `MOBILE` и `NONE` — никаких автоматических сетевых запросов.
+- Ручное обновление доступно на `WIFI` и `MOBILE`; на `NONE` — только сообщение «Нет подключения к интернету».
+- Пробный адрес: `https://cp.cloudflare.com/generate_204`, HEAD, таймауты 3 с (connect/read), call timeout 5 с.
+- Автообновление подписок — не чаще раза в 15 минут; ключ `last_auto_refresh` в `wisp_prefs`.
+- Версия: `versionCode = 5`, `versionName = "4.1"` (решение планировщика; при желании заменить перед Task 7).
+- Тексты интерфейса — на русском.
+- Комментарии в коде — в стиле существующих (русские, краткие).
+
+## Review Focus
+
+1. **Сырой `.txt` без HTML.** Подписка вида `vless://...` одной строкой на строку должна извлекаться полностью. Тест: `HtmlParserTest.extracts plain text subscription` в Task 1.
+2. **Ссылки внутри `<textarea>`.** Многие страницы подписок отдают ссылки в `<textarea>`; сбор текста из WebView обязан читать `textarea.value`, иначе результат пустой. Проверка: ручной шаг Task 6 + тест парсера на тексте, который возвращает JS.
+3. **Мобильный интернет + VPN.** Прямая загрузка должна работать, если VPN открывает доступ, но автообновление остаётся выключенным. Проверка: ручной шаг Task 6.
+4. **Wi-Fi с captive portal / белым списком.** Пробный запрос не отвечает — приложение не должно ходить на GitHub, падать или зависать; ручные кнопки остаются доступны. Тест: `InternetCheckerTest.returns false on 500` и `returns false when server is down` в Task 3 + ручной шаг Task 5.
+5. **Большая страница или много конфигов.** Автообновление идёт последовательно, тело ограничено 5 МБ, UI не должен зависать или падать по памяти. Тест: `SubscriptionFetcherTest.rejects oversized body` в Task 4 + ручной шаг Task 5.
+
+---
+
+### Task 0: Базовая проверка перед изменениями
+
+**Files:** нет (только проверка).
+
+**Interfaces:**
+- Consumes: ничего.
+- Produces: подтверждение, что базовая сборка и тесты проходят.
+
+- [ ] **Step 1: Проверить базовую сборку и тесты**
+
+Run: `.\gradlew.bat testDebugUnitTest assembleDebug`
+Expected: `BUILD SUCCESSFUL` (тестов пока нет, задача проходит вхолостую).
+
+- [ ] **Step 2: Зафиксировать базовый размер release APK**
+
+Проверить файл `app/release/Wisp.v4.0.apk`.
+Expected: существует, размер ≈ 1,7 МБ. Это baseline для Task 7.
+
+- [ ] **Step 3: Уточнить про git-тег (без изменений в коде)**
+
+`ForegroundUpdateManager` читает `https://api.github.com/repos/MrCECECE/Wisp/releases/latest`, то есть **GitHub Releases**, а не git-теги. Тег нужен только как основа релиза. Локальных тегов в репозитории нет; создавать их на этом шаге не требуется.
+
+- [ ] **Step 4: Закоммитить дизайн и план**
+
+```bash
+git add docs/superpowers/specs/2026-10-24-wisp-smart-updates-design.md docs/superpowers/plans/2026-10-24-wisp-smart-updates.md
+git commit -m "docs: add smart updates design and implementation plan"
+```
+
+---
+
+### Task 1: Мультипротокольный парсер `HtmlParser`
+
+**Files:**
+- Modify: `app/src/main/java/com/wisp/utils/HtmlParser.kt`
+- Create: `app/src/test/java/com/wisp/utils/HtmlParserTest.kt`
+
+**Interfaces:**
+- Consumes: ничего.
+- Produces:
+  - `HtmlParser.extractVpnUrls(text: String): List<String>` — та же сигнатура; теперь ищет протоколы и в сыром тексте, и в блоках `<pre>`, дедуплицирует, чистит артефакты.
+  - `HtmlParser.unescapeHtml(html: String): String` — без изменений.
+
+- [ ] **Step 1: Написать падающие тесты**
+
+```kotlin
+package com.wisp.utils
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class HtmlParserTest {
+
+    @Test
+    fun `extracts plain text subscription`() {
+        val text = """
+            vless://uuid@example.com:443?type=tcp#Node1
+            trojan://pass@example.com:443#Node2
+        """.trimIndent()
+
+        val urls = HtmlParser.extractVpnUrls(text)
+
+        assertEquals(2, urls.size)
+        assertTrue(urls.contains("vless://uuid@example.com:443?type=tcp#Node1"))
+        assertTrue(urls.contains("trojan://pass@example.com:443#Node2"))
+    }
+
+    @Test
+    fun `extracts all supported protocols`() {
+        val text = listOf(
+            "vless://a", "trojan://b", "vmess://c", "hysteria://d",
+            "hysteria2://e", "hy2://f", "ss://g", "ssr://h", "tuic://i"
+        ).joinToString("\n")
+
+        assertEquals(9, HtmlParser.extractVpnUrls(text).size)
+    }
+
+    @Test
+    fun `matches protocol case insensitively`() {
+        val urls = HtmlParser.extractVpnUrls("VLESS://a\nTrojan://b")
+        assertEquals(2, urls.size)
+    }
+
+    @Test
+    fun `deduplicates repeated urls`() {
+        val urls = HtmlParser.extractVpnUrls("vless://a\nvless://a\nvless://a")
+        assertEquals(listOf("vless://a"), urls)
+    }
+
+    @Test
+    fun `extracts from pre block`() {
+        val html = "<html><body><pre>vless://a\ntrojan://b</pre></body></html>"
+        assertEquals(2, HtmlParser.extractVpnUrls(html).size)
+    }
+
+    @Test
+    fun `cleans html artifacts`() {
+        val urls = HtmlParser.extractVpnUrls(
+            "vless://a?x=1&amp;y=2&headerType=none,\nvless://b%5C%22c"
+        )
+        assertEquals(
+            listOf("vless://a?x=1&y=2&headerType=none", "vless://bc"),
+            urls
+        )
+    }
+
+    @Test
+    fun `ignores non protocol lines`() {
+        val urls = HtmlParser.extractVpnUrls("hello\nhttps://example.com\n")
+        assertTrue(urls.isEmpty())
+    }
+}
+```
+
+Примечание: тесты вызывают только `extractVpnUrls` — она не использует `org.json`, поэтому безопасна в JVM-тестах. `unescapeHtml` в JVM-тестах не проверять: `org.json` в Android SDK не реализован для local unit tests.
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.utils.HtmlParserTest"`
+Expected: FAIL — сырой текст не извлекается, новых протоколов нет.
+
+- [ ] **Step 3: Реализовать парсер**
+
+В `HtmlParser.kt`:
+- Добавить приватный список `PROTOCOLS` (все 9 префиксов из теста) и предкомпилированные `PRE_REGEX` (`<pre[^>]*>(.*?)</pre>`, `DOT_MATCHES_ALL`) и `HEADER_NONE_REGEX` (`(?i)headerType=none[,%]*(?=&|$)`).
+- Если текст содержит `<pre` (без учёта регистра) — источники = содержимое всех `<pre>`; иначе источник = весь текст.
+- Для каждой строки каждого источника: `trim()`, проверить `PROTOCOLS.any { line.startsWith(it, ignoreCase = true) }`, при совпадении добавить в `LinkedHashSet` после очистки (существующие замены: `&amp;`→`&`, удаление `%5C`, `%22`, замена `%2C`→`,`, затем `HEADER_NONE_REGEX`).
+- Вернуть `urls.toList()`.
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.utils.HtmlParserTest"`
+Expected: PASS, 7 тестов.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add app/src/main/java/com/wisp/utils/HtmlParser.kt app/src/test/java/com/wisp/utils/HtmlParserTest.kt
+git commit -m "feat: support all common subscription protocols in parser"
+```
+
+---
+
+### Task 2: Политика частоты автообновления
+
+**Files:**
+- Create: `app/src/main/java/com/wisp/update/AutoRefreshPolicy.kt`
+- Create: `app/src/test/java/com/wisp/update/AutoRefreshPolicyTest.kt`
+
+**Interfaces:**
+- Consumes: ничего.
+- Produces:
+  - `object AutoRefreshPolicy { const val MIN_INTERVAL_MS: Long = 900_000L; fun isDue(lastAutoRefreshAt: Long, now: Long, minIntervalMs: Long = MIN_INTERVAL_MS): Boolean }`
+
+- [ ] **Step 1: Написать падающие тесты**
+
+```kotlin
+package com.wisp.update
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class AutoRefreshPolicyTest {
+    private val now = 1_000_000_000_000L
+
+    @Test
+    fun `due when never refreshed`() {
+        assertTrue(AutoRefreshPolicy.isDue(0L, now))
+    }
+
+    @Test
+    fun `not due within interval`() {
+        assertFalse(AutoRefreshPolicy.isDue(now - 5 * 60_000L, now))
+    }
+
+    @Test
+    fun `due after interval`() {
+        assertTrue(AutoRefreshPolicy.isDue(now - 16 * 60_000L, now))
+    }
+
+    @Test
+    fun `due when clock moved backwards`() {
+        assertTrue(AutoRefreshPolicy.isDue(now + 60_000L, now))
+    }
+}
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.update.AutoRefreshPolicyTest"`
+Expected: FAIL — класс не найден.
+
+- [ ] **Step 3: Реализовать `AutoRefreshPolicy`**
+
+Правило: `lastAutoRefreshAt <= 0` → true; `lastAutoRefreshAt > now` → true (часы перевели назад — не блокируем навсегда); иначе `now - lastAutoRefreshAt >= minIntervalMs`.
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.update.AutoRefreshPolicyTest"`
+Expected: PASS, 4 теста.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add app/src/main/java/com/wisp/update/AutoRefreshPolicy.kt app/src/test/java/com/wisp/update/AutoRefreshPolicyTest.kt
+git commit -m "feat: add auto-refresh interval policy"
+```
+
+---
+
+### Task 2b: Кэш форматтера дат
+
+**Files:**
+- Modify: `app/src/main/java/com/wisp/utils/DateUtils.kt`
+
+**Interfaces:**
+- Consumes: ничего.
+- Produces: `DateUtils.formatDate(date: Date): String` и `DateUtils.getRelativeTime(date: Date): String` — сигнатуры без изменений.
+
+- [ ] **Step 1: Заменить создание форматтера на кэшированный**
+
+Сейчас `formatDate` создаёт `SimpleDateFormat` при каждом вызове. Вынести в поле объекта:
+```kotlin
+private val formatter = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+```
+и использовать его. Добавить комментарий, что `SimpleDateFormat` не потокобезопасен и вызывается только с Main-потока (все текущие вызовы — из UI и из `autoRefreshAllConfigs`, которая выполняется на Main).
+
+- [ ] **Step 2: Собрать проект**
+
+Run: `.\gradlew.bat testDebugUnitTest assembleDebug`
+Expected: `BUILD SUCCESSFUL`.
+
+- [ ] **Step 3: Коммит**
+
+```bash
+git add app/src/main/java/com/wisp/utils/DateUtils.kt
+git commit -m "perf: reuse date formatter"
+```
+
+---
+
+### Task 3: Общий HTTP-клиент, проверка интернета и типа сети
+
+**Files:**
+- Create: `app/src/main/java/com/wisp/network/HttpClient.kt`
+- Create: `app/src/main/java/com/wisp/network/InternetChecker.kt`
+- Create: `app/src/main/java/com/wisp/network/NetworkMonitor.kt`
+- Create: `app/src/test/java/com/wisp/network/InternetCheckerTest.kt`
+- Modify: `app/src/main/java/com/wisp/update/ForegroundUpdateManager.kt`
+- Modify: `gradle/libs.versions.toml`
+- Modify: `app/build.gradle.kts`
+
+**Interfaces:**
+- Consumes: ничего.
+- Produces:
+  - `object HttpClient { val client: OkHttpClient }` — connect 10 с, read 30 с, один на приложение.
+  - `class InternetChecker(client: OkHttpClient, probeUrl: String = DEFAULT_PROBE_URL) { suspend fun isAvailable(): Boolean }`; `DEFAULT_PROBE_URL = "https://cp.cloudflare.com/generate_204"`.
+  - `enum class NetworkType { WIFI, MOBILE, NONE }`
+  - `object NetworkMonitor { fun getType(context: Context): NetworkType }`
+
+- [ ] **Step 1: Добавить тестовую зависимость MockWebServer**
+
+В `gradle/libs.versions.toml`:
+```toml
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
+```
+В `app/build.gradle.kts` в блок `dependencies`:
+```kotlin
+testImplementation(libs.okhttp.mockwebserver)
+```
+
+- [ ] **Step 2: Написать падающие тесты `InternetChecker`**
+
+```kotlin
+package com.wisp.network
+
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class InternetCheckerTest {
+
+    @Test
+    fun `returns true on 204`() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(204))
+        server.start()
+        try {
+            val checker = InternetChecker(HttpClient.client, server.url("/generate_204").toString())
+            assertTrue(checker.isAvailable())
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `returns false on 500`() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.start()
+        try {
+            val checker = InternetChecker(HttpClient.client, server.url("/generate_204").toString())
+            assertFalse(checker.isAvailable())
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `returns false when server is down`() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        val url = server.url("/generate_204").toString()
+        server.shutdown()
+
+        assertFalse(InternetChecker(HttpClient.client, url).isAvailable())
+    }
+}
+```
+
+- [ ] **Step 3: Убедиться, что тесты падают**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.network.InternetCheckerTest"`
+Expected: FAIL — классов нет.
+
+- [ ] **Step 4: Реализовать `HttpClient`**
+
+Ленивый `OkHttpClient.Builder().connectTimeout(10, SECONDS).readTimeout(30, SECONDS).build()` в `object HttpClient`.
+
+- [ ] **Step 5: Реализовать `InternetChecker`**
+
+В конструкторе создать `probeClient = client.newBuilder().connectTimeout(3, SECONDS).readTimeout(3, SECONDS).callTimeout(5, SECONDS).build()`. `isAvailable()` — `withContext(Dispatchers.IO)`, HEAD-запрос, `response.code == 204`; любое исключение → `false`.
+
+- [ ] **Step 6: Убедиться, что тесты проходят**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.network.InternetCheckerTest"`
+Expected: PASS, 3 теста.
+
+- [ ] **Step 7: Реализовать `NetworkMonitor`**
+
+`getType(context)`:
+1. Взять `activeNetwork` и его `NetworkCapabilities`; нет сети/возможностей или нет `NET_CAPABILITY_INTERNET` → `NONE`.
+2. `TRANSPORT_WIFI` или `TRANSPORT_ETHERNET` → `WIFI`.
+3. `TRANSPORT_CELLULAR` → `MOBILE`.
+4. `TRANSPORT_VPN` → перебрать `allNetworks`, пропуская VPN-сети; первая c `NET_CAPABILITY_INTERNET` и `TRANSPORT_WIFI` → `WIFI`; иначе первая с `TRANSPORT_CELLULAR` → `MOBILE`.
+5. Иначе → `NONE`.
+
+- [ ] **Step 8: Перевести `ForegroundUpdateManager` на общий клиент**
+
+- Заменить создание `private val client = OkHttpClient.Builder()...` на `private val client = HttpClient.client`.
+- Удалить импорты `java.util.concurrent.TimeUnit` (если больше не нужны).
+- В `onDestroy()` оставить только `cancelDownload()`; **удалить** `client.dispatcher.cancelAll()` — иначе менеджер обновлений будет отменять чужие запросы общего клиента (включая загрузку подписок).
+
+- [ ] **Step 9: Собрать и прогнать все тесты**
+
+Run: `.\gradlew.bat testDebugUnitTest assembleDebug`
+Expected: PASS, `BUILD SUCCESSFUL`.
+
+- [ ] **Step 10: Коммит**
+
+```bash
+git add app/src/main/java/com/wisp/network app/src/main/java/com/wisp/update/ForegroundUpdateManager.kt app/src/test/java/com/wisp/network gradle/libs.versions.toml app/build.gradle.kts
+git commit -m "feat: add shared http client, internet probe and network type detection"
+```
+
+---
+
+### Task 4: Загрузчик подписок
+
+**Files:**
+- Create: `app/src/main/java/com/wisp/network/SubscriptionFetcher.kt`
+- Create: `app/src/test/java/com/wisp/network/SubscriptionFetcherTest.kt`
+
+**Interfaces:**
+- Consumes: `HttpClient.client`.
+- Produces:
+  - `class SubscriptionFetcher(private val client: OkHttpClient) { suspend fun fetchDirect(rawUrl: String): Result<String> }`
+  - `SubscriptionFetcher.Companion.normalizeUrl(rawUrl: String): String`
+  - `SubscriptionFetcher.Companion.MAX_BODY_BYTES: Long = 5 * 1024 * 1024`
+
+- [ ] **Step 1: Написать падающие тесты**
+
+```kotlin
+package com.wisp.network
+
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okio.Buffer
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SubscriptionFetcherTest {
+
+    @Test
+    fun `normalizeUrl adds https when scheme missing`() {
+        assertEquals("https://example.com/sub", SubscriptionFetcher.normalizeUrl("example.com/sub"))
+    }
+
+    @Test
+    fun `normalizeUrl keeps existing scheme`() {
+        assertEquals("http://example.com", SubscriptionFetcher.normalizeUrl("http://example.com"))
+        assertEquals("https://example.com", SubscriptionFetcher.normalizeUrl("https://example.com"))
+    }
+
+    @Test
+    fun `fetchDirect returns body`() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("vless://a\ntrojan://b"))
+        server.start()
+        try {
+            val result = SubscriptionFetcher(OkHttpClient()).fetchDirect(server.url("/sub").toString())
+            assertTrue(result.isSuccess)
+            assertEquals("vless://a\ntrojan://b", result.getOrNull())
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `fetchDirect returns failure on 500`() = runBlocking {
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setResponseCode(500))
+        server.start()
+        try {
+            val result = SubscriptionFetcher(OkHttpClient()).fetchDirect(server.url("/sub").toString())
+            assertTrue(result.isFailure)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `rejects oversized body`() = runBlocking {
+        val server = MockWebServer()
+        val oversized = Buffer().write(ByteArray((SubscriptionFetcher.MAX_BODY_BYTES + 1).toInt()))
+        server.enqueue(MockResponse().setBody(oversized))
+        server.start()
+        try {
+            val result = SubscriptionFetcher(OkHttpClient()).fetchDirect(server.url("/sub").toString())
+            assertTrue(result.isFailure)
+        } finally {
+            server.shutdown()
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.network.SubscriptionFetcherTest"`
+Expected: FAIL — класса нет.
+
+- [ ] **Step 3: Реализовать `SubscriptionFetcher`**
+
+- `normalizeUrl`: `trim()`; если начинается с `http://` или `https://` (без учёта регистра) — вернуть как есть, иначе `"https://$trimmed"`.
+- `fetchDirect`: `withContext(Dispatchers.IO)`; GET с `User-Agent` как у WebView из `MainActivity`; `!response.isSuccessful` → `Result.failure(Exception("HTTP ${response.code}"))`.
+- Ограничение размера: если `body.contentLength() > MAX_BODY_BYTES` — failure сразу. Иначе читать `body.byteStream()` в `ByteArrayOutputStream`, прерываясь с failure, как только прочитано больше `MAX_BODY_BYTES` (защита от chunked-ответов без Content-Length). Вернуть `Result.success(text)`.
+- Любое исключение — `Result.failure(e)`.
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `.\gradlew.bat testDebugUnitTest --tests "com.wisp.network.SubscriptionFetcherTest"`
+Expected: PASS, 5 тестов.
+
+- [ ] **Step 5: Коммит**
+
+```bash
+git add app/src/main/java/com/wisp/network/SubscriptionFetcher.kt app/src/test/java/com/wisp/network/SubscriptionFetcherTest.kt
+git commit -m "feat: add direct subscription fetcher with size guard"
+```
+
+---
+
+### Task 5: Автообновление на Wi-Fi в `MainActivity`
+
+**Files:**
+- Modify: `app/src/main/java/com/wisp/repository/ConfigRepository.kt`
+- Modify: `app/src/main/java/com/wisp/MainActivity.kt`
+
+**Interfaces:**
+- Consumes: `NetworkMonitor`, `InternetChecker`, `SubscriptionFetcher`, `AutoRefreshPolicy`, `HtmlParser`, `ForegroundUpdateManager`.
+- Produces:
+  - `ConfigRepository.getLastAutoRefresh(): Long` — 0, если не задано.
+  - `ConfigRepository.setLastAutoRefresh(timestampMs: Long)` — пишет в `wisp_prefs`.
+  - `MainActivity` private: `scheduleAutoRefresh(delayMs: Long = 0L)`, `suspend fun runAutoRefresh()`, `suspend fun autoRefreshAllConfigs()`.
+
+- [ ] **Step 1: Добавить отметку автообновления в `ConfigRepository`**
+
+Ключ `last_auto_refresh`, методы чтения/записи через существующий `prefs`. Запись — `apply()`.
+
+- [ ] **Step 2: Подключить сетевое окружение в `MainActivity`**
+
+Добавить поля:
+```kotlin
+private val internetChecker by lazy { InternetChecker(HttpClient.client) }
+private val subscriptionFetcher by lazy { SubscriptionFetcher(HttpClient.client) }
+private var autoRefreshJob: Job? = null
+private var networkCallback: ConnectivityManager.NetworkCallback? = null
+```
+Импорты: `android.net.ConnectivityManager`, `android.net.Network`, `android.net.NetworkCapabilities`, `com.wisp.network.*`, `com.wisp.update.AutoRefreshPolicy`, `kotlinx.coroutines.Job`, `kotlinx.coroutines.delay`, `kotlinx.coroutines.launch`.
+
+- [ ] **Step 3: Убрать безусловную проверку обновления из `onCreate`**
+
+Удалить из `onCreate` блок:
+```kotlin
+updateManager.checkForUpdate(lifecycleScope) { tag, url, changelog ->
+    showUpdateDialog(tag, url, changelog)
+}
+```
+`cleanupOldApk()` оставить в `onCreate`. Проверка теперь запускается только из `runAutoRefresh()`.
+
+- [ ] **Step 4: Зарегистрировать `NetworkCallback` в `onStart`/`onStop`**
+
+Важно: колбэки приходят не на Main-поток, поэтому планировщик вызывается через `runOnUiThread`.
+
+```kotlin
+override fun onStart() {
+    super.onStart()
+    val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            runOnUiThread { scheduleAutoRefresh(1500L) }
+        }
+
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            runOnUiThread { scheduleAutoRefresh(1500L) }
+        }
+    }
+    networkCallback = callback
+    cm.registerDefaultNetworkCallback(callback)
+    scheduleAutoRefresh()
+}
+
+override fun onStop() {
+    autoRefreshJob?.cancel()
+    networkCallback?.let {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        cm.unregisterNetworkCallback(it)
+    }
+    networkCallback = null
+    super.onStop()
+}
+```
+
+- [ ] **Step 5: Реализовать планировщик и `runAutoRefresh`**
+
+`scheduleAutoRefresh(delayMs)` отменяет прошлый `autoRefreshJob`, запускает новый в `lifecycleScope`: при `delayMs > 0` — `delay(delayMs)`, затем `runAutoRefresh()`.
+
+`runAutoRefresh()` (`private suspend fun`):
+1. `if (NetworkMonitor.getType(this) != NetworkType.WIFI)` → `Log.d("WispAuto", "skip: not wifi")`, return.
+2. `if (!internetChecker.isAvailable())` → `Log.d("WispAuto", "skip: probe failed")`, return.
+3. `updateManager.checkForUpdate(lifecycleScope) { tag, url, changelog -> showUpdateDialog(tag, url, changelog) }` (внутри свой 24-часовой троттлинг).
+4. `if (!AutoRefreshPolicy.isDue(configRepository.getLastAutoRefresh(), System.currentTimeMillis()))` → return.
+5. `autoRefreshAllConfigs()`; после попытки (успешной или нет) — `configRepository.setLastAutoRefresh(System.currentTimeMillis())`.
+
+- [ ] **Step 6: Реализовать `autoRefreshAllConfigs`**
+
+`autoRefreshAllConfigs()` (suspend, выполняется на Main, сеть уходит в IO внутри fetcher):
+1. `val snapshot = configs.toList()`.
+2. Для каждого `config` из snapshot: пропустить `config === currentConfig`; `subscriptionFetcher.fetchDirect(config.url)`; при успехе — `HtmlParser.extractVpnUrls(text)`; если список непуст и `configs.any { it === config }` — `config.rawContent = urls.joinToString("\n")`, `config.lastUpdate = java.util.Date()`, счётчик +1; при неудаче — `Log.d("WispAuto", "fetch failed: ${config.name}: ${e.message}")`.
+3. Если обновлён хотя бы один — `configRepository.saveConfigs(configs)` и `loadConfigs()`.
+4. `Log.d("WispAuto", "updated $updated of ${snapshot.size}")`.
+
+Примечание: `rawContent` после обновления хранит список ссылок — как и после ручного «СОХРАНИТЬ СТРАНИЦУ».
+
+- [ ] **Step 7: Собрать проект**
+
+Run: `.\gradlew.bat assembleDebug`
+Expected: `BUILD SUCCESSFUL`.
+
+- [ ] **Step 8: Ручная проверка на устройстве**
+
+1. Wi-Fi, приложение открыто, в logcat фильтр `WispAuto`: появляются `updated N of M`, даты конфигов обновляются без нажатий; проверка обновления приложения срабатывает не чаще раза в 24 ч.
+2. Мобильный интернет: `skip: not wifi`, запросов к GitHub нет.
+3. Выключить и включить Wi-Fi при открытом приложении: после `onAvailable` попытка повторяется (с задержкой ~1,5 с).
+4. Wi-Fi с captive portal (или авиарежим → Wi-Fi без интернета): `skip: probe failed`, приложение не падает, ручные кнопки работают.
+
+- [ ] **Step 9: Коммит**
+
+```bash
+git add app/src/main/java/com/wisp/repository/ConfigRepository.kt app/src/main/java/com/wisp/MainActivity.kt
+git commit -m "feat: auto-refresh subscriptions and check updates on wifi only"
+```
+
+---
+
+### Task 6: Ручной выбор «напрямую / через Яндекс» и сбор текста из WebView
+
+**Files:**
+- Modify: `app/src/main/java/com/wisp/MainActivity.kt`
+
+**Interfaces:**
+- Consumes: `NetworkMonitor`, `HtmlParser`, существующий WebView-поток.
+- Produces:
+  - `private fun showRefreshChoice(config: ConfigItem, rowView: View)`
+  - `private fun openInWebView(config: ConfigItem, rowView: View, useProxy: Boolean)`
+  - `private fun buildUrl(rawUrl: String, useProxy: Boolean): String`
+
+- [ ] **Step 1: Заменить обработчик кнопки обновления**
+
+В `renderConfig` заменить `setOnClickListener { openInWebView(config, view) }` на `setOnClickListener { showRefreshChoice(config, view) }`.
+
+- [ ] **Step 2: Реализовать `showRefreshChoice`**
+
+Если `NetworkMonitor.getType(this) == NetworkType.NONE` — `Toast` «Нет подключения к интернету» и выход. Иначе `AlertDialog.Builder(this).setTitle(config.name).setItems(arrayOf("Напрямую", "Через Яндекс Переводчик")) { _, which -> openInWebView(config, rowView, useProxy = which == 1) }.show()`.
+
+- [ ] **Step 3: Обновить `openInWebView` и заменить `wrapWithProxy`**
+
+- `openInWebView(config, rowView, useProxy: Boolean)` — добавить параметр; удалить локальную переменную `var url` и проверку схемы, вместо этого сразу `webView.loadUrl(buildUrl(config.url, useProxy))`.
+- `buildUrl(rawUrl, useProxy)`: если `useProxy == false` — вернуть нормализованный URL (добавить `https://`, если схемы нет); если `true` — нормализовать так же, затем: не оборачивать, если URL уже содержит `translate.yandex.ru`, иначе `https://translate.yandex.ru/translate?url=${Uri.encode(normalized)}&lang=en-ru`.
+- Удалить старую `wrapWithProxy`.
+
+- [ ] **Step 4: Заменить сбор HTML на сбор текста**
+
+В `onPageFinished` заменить вызов `evaluateJavascript("(function() { return document.documentElement.outerHTML; })()")` на (вставлять в Kotlin как raw-string `"""..."""`):
+
+```javascript
+(function(){
+  var p=[];
+  document.querySelectorAll('pre,code,textarea').forEach(function(e){
+    p.push(e.value!==undefined?e.value:e.textContent);
+  });
+  if (p.length===0) p.push(document.body.innerText);
+  return p.join('\n');
+})()
+```
+
+Так для обычной текстовой подписки (браузер оборачивает её в `<pre>`) в память не попадает вся страница целиком, а для страниц без `<pre>/<code>/<textarea>` остаётся запасной путь через `body.innerText`.
+
+Результат по-прежнему прогонять через `HtmlParser.unescapeHtml(html)`.
+
+- [ ] **Step 5: Собрать проект**
+
+Run: `.\gradlew.bat assembleDebug`
+Expected: `BUILD SUCCESSFUL`.
+
+- [ ] **Step 6: Ручная проверка**
+
+1. Wi-Fi → «Напрямую»: страница открывается без Яндекса, «СОХРАНИТЬ СТРАНИЦУ» извлекает ссылки.
+2. Wi-Fi → «Через Яндекс Переводчик»: работает как раньше.
+3. Мобильный интернет + VPN, где прямой доступ открыт: «Напрямую» извлекает ссылки; автообновление при этом не запускается.
+4. Мобильный интернет без VPN: «Напрямую» показывает ошибку загрузки, «Через Яндекс» извлекает ссылки.
+5. Страница, где ссылки лежат в `<textarea>`: извлечение находит их (проверить на реальной подписке, отдающей textarea).
+
+- [ ] **Step 7: Коммит**
+
+```bash
+git add app/src/main/java/com/wisp/MainActivity.kt
+git commit -m "feat: manual direct or yandex proxy refresh and lighter webview text extraction"
+```
+
+---
+
+### Task 7: Размер APK, версия и релиз
+
+**Files:**
+- Modify: `gradle/libs.versions.toml`
+- Modify: `app/build.gradle.kts`
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: всё предыдущее.
+- Produces: релизная сборка 4.1 без неиспользуемой зависимости.
+
+- [ ] **Step 1: Удалить неиспользуемый `androidx.cardview`**
+
+- В `gradle/libs.versions.toml` удалить строку `cardview = "1.0.0"` и `androidx-cardview = ...`.
+- В `app/build.gradle.kts` удалить `implementation(libs.androidx.cardview)`.
+- Не трогать `MaterialCardView` в `item_config.xml` — он приходит из `material`.
+
+- [ ] **Step 2: Поднять версию**
+
+В `app/build.gradle.kts`: `versionCode = 5`, `versionName = "4.1"`.
+
+- [ ] **Step 3: Проверить неиспользуемые ресурсы**
+
+Run: `.\gradlew.bat lintRelease`
+Expected: `BUILD SUCCESSFUL`. Просмотреть отчёт `app/build/reports/lint-results-release.html`: удалить только те ресурсы, которые помечены `UnusedResources` и не упоминаются в коде/разметке. Сомнительные — оставить.
+
+- [ ] **Step 4: Прогнать тесты и собрать release**
+
+Run: `.\gradlew.bat testDebugUnitTest assembleRelease`
+Expected: PASS, `BUILD SUCCESSFUL`.
+
+- [ ] **Step 5: Сравнить размер с baseline**
+
+Проверить `app/build/outputs/apk/release/app-release-unsigned.apk`.
+Expected: не больше baseline 1,7 МБ + 150 КБ. Если вырос больше — проверить, не попали ли тестовые зависимости в release (их быть не должно).
+
+- [ ] **Step 6: Обновить README**
+
+В раздел «Возможности» добавить: автообновление подписок и проверка обновлений только на Wi-Fi; ручной выбор «напрямую / через Яндекс»; поддержка `vless`, `trojan`, `vmess`, `hysteria`, `hysteria2`, `ss`, `ssr`, `tuic`.
+
+- [ ] **Step 7: Коммит**
+
+```bash
+git add gradle/libs.versions.toml app/build.gradle.kts README.md
+git commit -m "chore: bump to 4.1 and drop unused cardview dependency"
+```
+
+- [ ] **Step 8: Ручной релиз (вне кода)**
+
+1. В Android Studio: `Build → Generate Signed App Bundle / APK → APK → release`, подписать существующим keystore, сохранить как `Wisp.v4.1.apk`.
+2. Создать GitHub Release с тегом `v4.1` и приложить `Wisp.v4.1.apk`.
+3. Проверить автообновление: на устройстве с 4.0 (по Wi-Fi) должен появиться диалог обновления до 4.1. На мобильном интернете после обновления до 4.1 проверка не выполняется.
+
+**Примечание:** пользователи на 4.0 ещё используют старую логику и могут проверить обновление на любой сети — это ожидаемо; новое условие «только Wi-Fi» действует начиная с 4.1.
+
+---
+
+## Ручные шаги вне зоны агента
+
+- **Замена логотипа:** нужна картинка владельца (квадратная PNG, желательно 1024×1024). Android Studio → `File → New → Image Asset → Launcher Icons (Adaptive and Legacy)` → выбрать файл → `Finish`. Проверить, что `AndroidManifest.xml` ссылается на `@mipmap/ic_launcher` и `@mipmap/ic_launcher_round` (уже ссылается).
+- **Сборка подписанного APK** — только в Android Studio с keystore владельца; из терминала `assembleRelease` даёт unsigned APK.
+- **Проверка на реальных сетях** — Wi-Fi, мобильный интернет с белым списком, мобильный + VPN: только владелец может подтвердить поведение оператора.
