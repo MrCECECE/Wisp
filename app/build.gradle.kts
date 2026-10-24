@@ -48,6 +48,7 @@ dependencies {
     implementation(libs.androidx.cardview)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

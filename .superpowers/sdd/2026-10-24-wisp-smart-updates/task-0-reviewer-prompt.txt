@@ -1,0 +1,24 @@
+You are reviewing Task 0 from the Wisp smart updates plan.
+
+TASK BRIEF: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-0-brief.md
+IMPLEMENTER REPORT: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-0-report.md
+REVIEW PACKAGE: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-0-review-package.txt
+
+GLOBAL CONSTRAINTS (from plan):
+- Только Android, один модуль `:app`; KMP, iOS, desktop, Compose Multiplatform не добавлять
+- Без веток: все коммиты — в текущую ветку
+- `minSdk 24`, `targetSdk 35`, `compileSdk 37`, AGP 9.4.0, Gradle 9.8.0
+- Release сохраняет `minifyEnabled = true` и `shrinkResources = true`
+- Новые runtime-зависимости не добавлять
+- Автоматические проверки работают только в foreground
+- Тексты интерфейса — на русском
+- Коммиты в текущую ветку
+
+REVIEW REQUIREMENTS:
+1. Spec compliance: did implementation match the task requirements exactly?
+2. Code quality: are changes clean, follow project style?
+3. Check for any violations of global constraints
+
+Provide verdict: SPEC_COMPLIANT and QUALITY_OK, or list issues with severity (Critical/Important/Minor).
+
+Write review to: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-0-review.md

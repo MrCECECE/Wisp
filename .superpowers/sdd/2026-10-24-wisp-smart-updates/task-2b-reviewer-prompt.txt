@@ -1,0 +1,18 @@
+You are reviewing Task 2b from the Wisp smart updates plan.
+
+TASK BRIEF: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-2b-brief.md
+IMPLEMENTER REPORT: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-2b-report.md
+REVIEW PACKAGE: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-2b-review-package.txt
+
+GLOBAL CONSTRAINTS:
+- Только Android, один модуль `:app`
+- AGP 9.4.0, Gradle 9.8.0
+- Коммиты в текущую ветку
+
+REVIEW REQUIREMENTS:
+1. Spec compliance - SimpleDateFormat cached in field, comment about thread-safety added
+2. Signatures unchanged
+3. Build passes
+
+Write review to: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-2b-review.md
+Provide verdict: SPEC_COMPLIANT and QUALITY_OK or list issues.

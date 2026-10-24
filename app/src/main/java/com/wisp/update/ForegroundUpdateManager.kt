@@ -14,12 +14,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
+import com.wisp.network.HttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.util.concurrent.TimeUnit
 
 class ForegroundUpdateManager(
     private val context: Context,
@@ -44,10 +43,7 @@ class ForegroundUpdateManager(
         private const val LEGACY_KEY_PENDING_VERSION_CODE = "pending_version_code"
     }
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val client = HttpClient.client
     private val prefs = context.getSharedPreferences("update_prefs", Context.MODE_PRIVATE)
     private var downloadJob: Job? = null
 
@@ -233,6 +229,5 @@ class ForegroundUpdateManager(
 
     fun onDestroy() {
         cancelDownload()
-        client.dispatcher.cancelAll()
     }
 }

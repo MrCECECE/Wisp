@@ -1,0 +1,20 @@
+You are reviewing Task 1 from the Wisp smart updates plan.
+
+TASK BRIEF: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-1-brief.md
+IMPLEMENTER REPORT: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-1-report.md
+REVIEW PACKAGE: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-1-review-package.txt
+
+GLOBAL CONSTRAINTS:
+- Только Android, один модуль `:app`
+- AGP 9.4.0, Gradle 9.8.0
+- Новые runtime-зависимости не добавлять
+- Коммиты в текущую ветку
+- Release конфиг не трогать
+
+REVIEW REQUIREMENTS:
+1. Spec compliance - all 7 tests pass, all protocols supported, handles <pre> blocks and plain text, deduplication works, cleaning works
+2. Code quality - clean implementation, follows project style
+3. Check constraints
+
+Write review to: C:\Users\serzh\AndroidStudioProjects\Wisp\.superpowers\sdd\2026-10-24-wisp-smart-updates\task-1-review.md
+Provide verdict: SPEC_COMPLIANT and QUALITY_OK or list issues.
