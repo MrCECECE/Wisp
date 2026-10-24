@@ -19,12 +19,14 @@ object NetworkMonitor {
             for (net in cm.allNetworks) {
                 if (net == active) continue
                 val c = cm.getNetworkCapabilities(net) ?: continue
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
                 if (!c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue
                 if (c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return NetworkType.WIFI
             }
             for (net in cm.allNetworks) {
                 if (net == active) continue
                 val c = cm.getNetworkCapabilities(net) ?: continue
+                if (c.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
                 if (!c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue
                 if (c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return NetworkType.MOBILE
             }
