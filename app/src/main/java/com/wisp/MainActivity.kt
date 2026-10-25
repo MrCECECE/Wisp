@@ -4,6 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -24,11 +27,20 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import com.wisp.model.ConfigItem
+import com.wisp.network.HttpClient
+import com.wisp.network.InternetChecker
+import com.wisp.network.NetworkMonitor
+import com.wisp.network.NetworkType
+import com.wisp.network.SubscriptionFetcher
 import com.wisp.repository.ConfigRepository
+import com.wisp.update.AutoRefreshPolicy
 import com.wisp.update.ForegroundUpdateManager
 import com.wisp.utils.DateUtils
 import com.wisp.utils.HtmlParser
 import com.wisp.utils.ThemeManager
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -55,6 +67,10 @@ class MainActivity : AppCompatActivity() {
     private var currentConfig: ConfigItem? = null
     private var currentConfigView: View? = null
     private var downloadDialog: AlertDialog? = null
+    private val internetChecker by lazy { InternetChecker(HttpClient.client) }
+    private val subscriptionFetcher by lazy { SubscriptionFetcher(HttpClient.client) }
+    private var autoRefreshJob: Job? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val webViewBackCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
@@ -84,9 +100,6 @@ class MainActivity : AppCompatActivity() {
 
         // APK прошлой установки мог остаться — чистим до новой проверки обновлений
         updateManager.cleanupOldApk()
-        updateManager.checkForUpdate(lifecycleScope) { tag, url, changelog ->
-            showUpdateDialog(tag, url, changelog)
-        }
 
         configRepository.loadDefaultsIfNeeded()
         loadConfigs()
@@ -439,6 +452,85 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Позже") { dialog, _ -> dialog.dismiss() }
             .show()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                runOnUiThread { scheduleAutoRefresh(1500L) }
+            }
+
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                runOnUiThread { scheduleAutoRefresh(1500L) }
+            }
+        }
+        networkCallback = callback
+        cm.registerDefaultNetworkCallback(callback)
+        scheduleAutoRefresh()
+    }
+
+    override fun onStop() {
+        autoRefreshJob?.cancel()
+        networkCallback?.let {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            cm.unregisterNetworkCallback(it)
+        }
+        networkCallback = null
+        super.onStop()
+    }
+
+    private fun scheduleAutoRefresh(delayMs: Long = 0L) {
+        autoRefreshJob?.cancel()
+        autoRefreshJob = lifecycleScope.launch {
+            if (delayMs > 0) delay(delayMs)
+            runAutoRefresh()
+        }
+    }
+
+    private suspend fun runAutoRefresh() {
+        if (NetworkMonitor.getType(this) != NetworkType.WIFI) {
+            Log.d("WispAuto", "skip: not wifi")
+            return
+        }
+        if (!internetChecker.isAvailable()) {
+            Log.d("WispAuto", "skip: probe failed")
+            return
+        }
+        updateManager.checkForUpdate(lifecycleScope) { tag, url, changelog ->
+            showUpdateDialog(tag, url, changelog)
+        }
+        if (!AutoRefreshPolicy.isDue(configRepository.getLastAutoRefresh(), System.currentTimeMillis())) {
+            return
+        }
+        autoRefreshAllConfigs()
+        configRepository.setLastAutoRefresh(System.currentTimeMillis())
+    }
+
+    private suspend fun autoRefreshAllConfigs() {
+        val snapshot = configs.toList()
+        var updated = 0
+        for (config in snapshot) {
+            if (config === currentConfig) continue
+            val result = subscriptionFetcher.fetchDirect(config.url)
+            result.onSuccess { text ->
+                if (!configs.contains(config)) return@onSuccess
+                val urls = HtmlParser.extractVpnUrls(text)
+                if (urls.isNotEmpty()) {
+                    config.rawContent = urls.joinToString("\n")
+                    config.lastUpdate = java.util.Date()
+                    updated++
+                }
+            }.onFailure { e ->
+                Log.d("WispAuto", "fetch failed: ${config.name}: ${e.message}")
+            }
+        }
+        if (updated > 0) {
+            configRepository.saveConfigs(configs)
+            loadConfigs()
+        }
+        Log.d("WispAuto", "updated $updated of ${snapshot.size}")
     }
 
     override fun onUserLeaveHint() {

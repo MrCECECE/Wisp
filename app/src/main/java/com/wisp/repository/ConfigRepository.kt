@@ -43,6 +43,12 @@ class ConfigRepository(private val context: Context) {
         }
     }
 
+    fun getLastAutoRefresh(): Long = prefs.getLong("last_auto_refresh", 0L)
+
+    fun setLastAutoRefresh(timestampMs: Long) {
+        prefs.edit().putLong("last_auto_refresh", timestampMs).apply()
+    }
+
     /**
      * Загружает предустановленные конфиги из res/raw/default_configs.json
      * Только если список пуст (первый запуск)
