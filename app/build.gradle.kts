@@ -10,8 +10,8 @@ android {
         applicationId = "com.wisp"
         minSdk = 24
         targetSdk = 35
-        versionCode = 4
-        versionName = "4.0"
+        versionCode = 5
+        versionName = "4.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -45,7 +45,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
-    implementation(libs.androidx.cardview)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     testImplementation(libs.okhttp.mockwebserver)
