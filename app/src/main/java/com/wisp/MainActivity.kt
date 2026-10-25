@@ -204,7 +204,7 @@ class MainActivity : AppCompatActivity() {
         view.findViewById<TextView>(R.id.tvDate).text = config.lastUpdate?.let { "Обновлено: ${DateUtils.formatDate(it)}" } ?: "Не обновлено"
         view.findViewById<TextView>(R.id.tvRelativeTime).text = config.lastUpdate?.let { DateUtils.getRelativeTime(it) } ?: ""
         view.tag = config
-        view.findViewById<ImageButton>(R.id.btnRefresh).setOnClickListener { openInWebView(config, view) }
+        view.findViewById<ImageButton>(R.id.btnRefresh).setOnClickListener { showRefreshChoice(config, view) }
         view.findViewById<ImageButton>(R.id.btnCopyUrls).setOnClickListener { copyUrlsToClipboard(config) }
         view.findViewById<ImageButton>(R.id.btnMenu).setOnClickListener { showConfigMenu(config, view) }
         listContainer.addView(view)
@@ -220,14 +220,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openInWebView(config: ConfigItem, rowView: View) {
+    private fun showRefreshChoice(config: ConfigItem, rowView: View) {
+        if (NetworkMonitor.getType(this) == NetworkType.NONE) {
+            Toast.makeText(this, "Нет подключения к интернету", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(config.name)
+            .setItems(arrayOf("Напрямую", "Через Яндекс Переводчик")) { _, which ->
+                openInWebView(config, rowView, useProxy = which == 1)
+            }
+            .show()
+    }
+
+    private fun buildUrl(rawUrl: String, useProxy: Boolean): String {
+        var normalized = rawUrl.trim()
+        if (!normalized.startsWith("http://", ignoreCase = true) && !normalized.startsWith("https://", ignoreCase = true)) {
+            normalized = "https://$normalized"
+        }
+        if (!useProxy) {
+            return normalized
+        }
+        if (normalized.contains("translate.yandex.ru")) return normalized
+        val encodedUrl = Uri.encode(normalized)
+        return "https://translate.yandex.ru/translate?url=$encodedUrl&lang=en-ru"
+    }
+
+    private fun openInWebView(config: ConfigItem, rowView: View, useProxy: Boolean) {
         currentConfig = config
         currentConfigView = rowView
-        var url = config.url.trim()
-        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) {
-            url = "https://$url"
-        }
-        webView.loadUrl(wrapWithProxy(url))
+        val url = buildUrl(config.url, useProxy)
+        webView.loadUrl(url)
         webView.visibility = View.VISIBLE
         webViewButtons.visibility = View.VISIBLE
         listContainer.visibility = View.GONE
@@ -269,7 +292,8 @@ class MainActivity : AppCompatActivity() {
                 // Фиксируем конфиг на момент загрузки: колбэк может прийти позже,
                 // чем пользователь переключится на другой конфиг
                 val loadedConfig = currentConfig ?: return
-                view?.evaluateJavascript("(function() { return document.documentElement.outerHTML; })()") { html ->
+                val js = "(function(){var p=[];document.querySelectorAll('pre,code,textarea').forEach(function(e){p.push(e.value!==undefined?e.value:e.textContent);});if(p.length===0&&document.body){p.push(document.body.innerText);}return p.join('\\n');})()"
+                view?.evaluateJavascript(js) { html ->
                     if (currentConfig === loadedConfig && html != null) {
                         loadedConfig.rawContent = HtmlParser.unescapeHtml(html)
                     }
@@ -369,15 +393,7 @@ class MainActivity : AppCompatActivity() {
         configs.forEach { renderConfig(it) }
     }
 
-    private fun wrapWithProxy(rawUrl: String): String {
-        if (rawUrl.contains("translate.yandex.ru")) return rawUrl
-        if (!rawUrl.startsWith("http://", ignoreCase = true) && !rawUrl.startsWith("https://", ignoreCase = true)) {
-            return rawUrl
-        }
-        // Uri.encode оставляет допустимые для query символы и не превращает пробел в "+"
-        val encodedUrl = Uri.encode(rawUrl)
-        return "https://translate.yandex.ru/translate?url=$encodedUrl&lang=en-ru"
-    }
+
 
     private fun showUpdateDialog(tag: String, url: String, changelog: String) {
         // ✅ Диалог не показывается, если активность уходит в фон или уничтожается
