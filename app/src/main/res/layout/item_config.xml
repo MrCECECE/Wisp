@@ -51,24 +51,34 @@
                 android:textColor="@color/hydrangea_purple" />
         </LinearLayout>
 
-        <!-- Правая часть: три кнопки -->
+        <!-- Правая часть: кнопки -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
-            <ImageButton
-                android:id="@+id/btnRefresh"
+            <Button
+                android:id="@+id/btnRefreshDirect"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@drawable/ic_refresh"
-                android:contentDescription="Обновить"
+                android:contentDescription="Обновить напрямую"
                 android:tint="@color/icon_tint"
                 android:scaleType="centerInside" />
 
-            <ImageButton
+            <Button
+                android:id="@+id/btnRefreshProxy"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_refresh"
+                android:contentDescription="Обновить через Яндекс Переводчик"
+                android:tint="@color/icon_tint"
+                android:scaleType="centerInside" />
+
+            <Button
                 android:id="@+id/btnCopyUrls"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
@@ -78,7 +88,7 @@
                 android:tint="@color/icon_tint"
                 android:scaleType="centerInside" />
 
-            <ImageButton
+            <Button
                 android:id="@+id/btnMenu"
                 android:layout_width="40dp"
                 android:layout_height="40dp"

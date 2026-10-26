@@ -204,7 +204,8 @@ class MainActivity : AppCompatActivity() {
         view.findViewById<TextView>(R.id.tvDate).text = config.lastUpdate?.let { "Обновлено: ${DateUtils.formatDate(it)}" } ?: "Не обновлено"
         view.findViewById<TextView>(R.id.tvRelativeTime).text = config.lastUpdate?.let { DateUtils.getRelativeTime(it) } ?: ""
         view.tag = config
-        view.findViewById<ImageButton>(R.id.btnRefresh).setOnClickListener { showRefreshChoice(config, view) }
+        view.findViewById<ImageButton>(R.id.btnRefreshDirect).setOnClickListener { openInWebView(config, view, false) }
+        view.findViewById<ImageButton>(R.id.btnRefreshProxy).setOnClickListener { openInWebView(config, view, true) }
         view.findViewById<ImageButton>(R.id.btnCopyUrls).setOnClickListener { copyUrlsToClipboard(config) }
         view.findViewById<ImageButton>(R.id.btnMenu).setOnClickListener { showConfigMenu(config, view) }
         listContainer.addView(view)
@@ -218,19 +219,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             Toast.makeText(this, "Ссылки не найдены. Сначала обновите конфиг.", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun showRefreshChoice(config: ConfigItem, rowView: View) {
-        if (NetworkMonitor.getType(this) == NetworkType.NONE) {
-            Toast.makeText(this, "Нет подключения к интернету", Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle(config.name)
-            .setItems(arrayOf("Напрямую", "Через Яндекс Переводчик")) { _, which ->
-                openInWebView(config, rowView, useProxy = which == 1)
-            }
-            .show()
     }
 
     private fun buildUrl(rawUrl: String, useProxy: Boolean): String {
