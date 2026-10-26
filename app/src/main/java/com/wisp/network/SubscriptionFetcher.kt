@@ -62,12 +62,27 @@ class SubscriptionFetcher(private val client: OkHttpClient) {
     companion object {
         const val MAX_BODY_BYTES: Long = 5 * 1024 * 1024
 
+        /**
+         * Ссылка на файл в веб-интерфейсе GitHub отдаёт HTML-страницу,
+         * а не сам файл. Параметр raw=true перенаправляет на raw.githubusercontent.com,
+         * где лежит обычный текст, который парсится без HTML.
+         */
+        private val GITHUB_BLOB_LINK =
+            Regex("(?i)^https?://(?:www\\.)?github\\.com/[^/]+/[^/]+/blob/.+$")
+
         fun normalizeUrl(rawUrl: String): String {
             val trimmed = rawUrl.trim()
-            if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-                return trimmed
+            val withScheme = if (
+                trimmed.startsWith("http://", ignoreCase = true) ||
+                trimmed.startsWith("https://", ignoreCase = true)
+            ) {
+                trimmed
+            } else {
+                "https://$trimmed"
             }
-            return "https://$trimmed"
+            if (!GITHUB_BLOB_LINK.matches(withScheme)) return withScheme
+            val separator = if (withScheme.contains('?')) "&" else "?"
+            return "$withScheme${separator}raw=true"
         }
     }
 }

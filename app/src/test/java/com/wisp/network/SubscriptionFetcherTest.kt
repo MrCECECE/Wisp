@@ -23,6 +23,28 @@ class SubscriptionFetcherTest {
     }
 
     @Test
+    fun `normalizeUrl turns github blob link into raw file link`() {
+        assertEquals(
+            "https://github.com/owner/repo/blob/main/subs.txt?raw=true",
+            SubscriptionFetcher.normalizeUrl("github.com/owner/repo/blob/main/subs.txt")
+        )
+    }
+
+    @Test
+    fun `normalizeUrl keeps existing github query parameters`() {
+        assertEquals(
+            "https://github.com/owner/repo/blob/main/subs.txt?plain=1&raw=true",
+            SubscriptionFetcher.normalizeUrl("https://github.com/owner/repo/blob/main/subs.txt?plain=1")
+        )
+    }
+
+    @Test
+    fun `normalizeUrl leaves raw github link untouched`() {
+        val raw = "https://raw.githubusercontent.com/owner/repo/main/subs.txt"
+        assertEquals(raw, SubscriptionFetcher.normalizeUrl(raw))
+    }
+
+    @Test
     fun `fetchDirect returns body`() = runBlocking {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("vless://a\ntrojan://b"))

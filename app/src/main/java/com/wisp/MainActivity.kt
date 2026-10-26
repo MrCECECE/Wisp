@@ -222,10 +222,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun buildUrl(rawUrl: String, useProxy: Boolean): String {
-        var normalized = rawUrl.trim()
-        if (!normalized.startsWith("http://", ignoreCase = true) && !normalized.startsWith("https://", ignoreCase = true)) {
-            normalized = "https://$normalized"
-        }
+        val normalized = SubscriptionFetcher.normalizeUrl(rawUrl)
         if (!useProxy) {
             return normalized
         }

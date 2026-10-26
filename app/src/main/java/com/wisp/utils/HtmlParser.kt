@@ -6,11 +6,43 @@ import java.util.LinkedHashSet
 object HtmlParser {
 
     private val PROTOCOLS = listOf(
-        "vless", "trojan", "vmess", "hysteria", "hysteria2", "hy2", "ss", "ssr", "tuic"
+        "vless", "trojan", "vmess", "hysteria2", "hysteria", "hy2", "ssr", "ss", "tuic"
     )
 
-    private val PRE_REGEX = Regex("<pre[^>]*>(.*?)</pre>", RegexOption.DOT_MATCHES_ALL)
+    /**
+     * Ссылка распознаётся в любом месте текста, а не только в начале строки:
+     * в HTML-страницах (например, на GitHub) ссылка стоит после тегов или
+     * маркера списка, а в JSON-полезной нагрузке — внутри строки.
+     */
+    private val URL_REGEX = Regex(
+        "(?i)(?:" + PROTOCOLS.joinToString("|") + ")://[^\\s\"'<>\\\\]+"
+    )
+
+    /**
+     * Теги, которые в HTML разделяют строки. GitHub кладёт каждую строку файла
+     * в отдельный <div>, поэтому без замены на перевод строки строки склеятся.
+     */
+    private val BLOCK_TAG_REGEX = Regex(
+        "(?i)<(?:br|/p|/div|/li|/tr|/pre|/h[1-6]|/table|/section|/article|/td|/th)\\s*/?>"
+    )
+    private val ANY_TAG_REGEX = Regex("<[^>]+>")
+
+    /** Мусор, который может прилипнуть к ссылке в тексте или markdown. */
+    private val TRAILING_JUNK = charArrayOf(',', '.', ';', ':', ')', ']', '}', '\'', '"')
+
     private val HEADER_NONE_REGEX = Regex("(?i)headerType=none[,%]*(?=&|$)")
+
+    private val ESCAPES = listOf(
+        "\\u003C" to "<",
+        "\\u003E" to ">",
+        "\\u0022" to "\"",
+        "\\u0026" to "&",
+        "\\u0027" to "'",
+        "\\u003D" to "=",
+        "\\/" to "/",
+        "\\n" to "\n",
+        "\\t" to "\t"
+    )
 
     /**
      * evaluateJavascript возвращает результат в виде JSON-литерала.
@@ -28,50 +60,47 @@ object HtmlParser {
                 // не валидный JSON — падаем в ручные замены
             }
         }
-        var result = trimmed.removeSurrounding("\"")
-        result = result.replace("\\u003C", "<", ignoreCase = true)
-        result = result.replace("\\u003E", ">", ignoreCase = true)
-        result = result.replace("\\u0022", "\"", ignoreCase = true)
-        result = result.replace("\\u0026", "&", ignoreCase = true)
-        result = result.replace("\\u0027", "'", ignoreCase = true)
-        result = result.replace("\\u003D", "=", ignoreCase = true)
-        result = result.replace("\\/", "/")
-        result = result.replace("\\n", "\n")
-        result = result.replace("\\t", "\t")
+        return decodeEscapes(trimmed.removeSurrounding("\""))
+    }
+
+    private fun decodeEscapes(value: String): String {
+        var result = value
+        for ((from, to) in ESCAPES) {
+            result = result.replace(from, to, ignoreCase = true)
+        }
         return result
+    }
+
+    /**
+     * Приводит входной текст к виду «одна строка — один элемент»:
+     * снимает HTML-теги, раскрывает сущности (&amp;, &lt;, ...) и
+     * \uXXXX-эскейпы из JSON-полезной нагрузки страницы.
+     */
+    private fun normalizeContent(raw: String): String {
+        var text = BLOCK_TAG_REGEX.replace(raw, "\n")
+        text = ANY_TAG_REGEX.replace(text, "")
+        text = text
+            .replace("&nbsp;", " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+        return decodeEscapes(text)
     }
 
     fun extractVpnUrls(text: String): List<String> {
         val urls = LinkedHashSet<String>()
-
-        val sources = if (text.contains("<pre", ignoreCase = true)) {
-            val result = mutableListOf<String>()
-            for (match in PRE_REGEX.findAll(text)) {
-                result.add(match.groupValues[1])
-            }
-            result
-        } else {
-            listOf(text)
-        }
-
-        for (source in sources) {
-            for (line in source.lines()) {
-                val trimmed = line.trim()
-                if (trimmed.isEmpty()) continue
-                val lower = trimmed.lowercase()
-                val matchesProtocol = PROTOCOLS.any { protocol ->
-                    lower.startsWith("$protocol://")
-                }
-                if (matchesProtocol) {
-                    var clean = trimmed
-                        .replace("&amp;", "&")
-                        .replace("%5C", "")
-                        .replace("%22", "")
-                        .replace("%2C", ",")
-                    clean = HEADER_NONE_REGEX.replace(clean, "headerType=none")
-                    urls.add(clean)
-                }
-            }
+        for (match in URL_REGEX.findAll(normalizeContent(text))) {
+            var clean = match.value.trimEnd(*TRAILING_JUNK)
+            clean = clean
+                .replace("&amp;", "&")
+                .replace("%5C", "")
+                .replace("%22", "")
+                .replace("%2C", ",")
+            clean = HEADER_NONE_REGEX.replace(clean, "headerType=none")
+            urls.add(clean)
         }
         return urls.toList()
     }

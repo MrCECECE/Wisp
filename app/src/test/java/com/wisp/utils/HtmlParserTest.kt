@@ -64,4 +64,44 @@ class HtmlParserTest {
         val urls = HtmlParser.extractVpnUrls("hello\nhttps://example.com\n")
         assertTrue(urls.isEmpty())
     }
+
+    @Test
+    fun `extracts from github blob html`() {
+        val html = """
+            <!DOCTYPE html><html><body>
+            <div class="react-file-line html-div"><span class="pl-s">vless://a@host:443?type=tcp&amp;security=reality#Node</span></div>
+            <div class="react-file-line html-div"><span>trojan://pass@host:443#T</span></div>
+            </body></html>
+        """.trimIndent()
+
+        val urls = HtmlParser.extractVpnUrls(html)
+
+        assertEquals(
+            listOf("vless://a@host:443?type=tcp&security=reality#Node", "trojan://pass@host:443#T"),
+            urls
+        )
+    }
+
+    @Test
+    fun `extracts from json payload with unicode escapes`() {
+        val html = "{\"lines\":[\"vless://a@host:443?pbk=1\\u0026sid=2#N\"]}"
+
+        assertEquals(listOf("vless://a@host:443?pbk=1&sid=2#N"), HtmlParser.extractVpnUrls(html))
+    }
+
+    @Test
+    fun `finds urls not at line start`() {
+        val text = "- vless://a@host:443#A\nСкачать: trojan://b@host:443#B"
+
+        assertEquals(
+            listOf("vless://a@host:443#A", "trojan://b@host:443#B"),
+            HtmlParser.extractVpnUrls(text)
+        )
+    }
+
+    @Test
+    fun `keeps vmess base64 padding`() {
+        val urls = HtmlParser.extractVpnUrls("vmess://eyJ2IjoiMiJ9==")
+        assertEquals(listOf("vmess://eyJ2IjoiMiJ9=="), urls)
+    }
 }
