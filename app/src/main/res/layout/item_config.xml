@@ -58,7 +58,7 @@
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
-            <Button
+            <ImageButton
                 android:id="@+id/btnRefreshDirect"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
@@ -68,7 +68,7 @@
                 android:tint="@color/icon_tint"
                 android:scaleType="centerInside" />
 
-            <Button
+            <ImageButton
                 android:id="@+id/btnRefreshProxy"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
@@ -78,7 +78,7 @@
                 android:tint="@color/icon_tint"
                 android:scaleType="centerInside" />
 
-            <Button
+            <ImageButton
                 android:id="@+id/btnCopyUrls"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
@@ -88,7 +88,7 @@
                 android:tint="@color/icon_tint"
                 android:scaleType="centerInside" />
 
-            <Button
+            <ImageButton
                 android:id="@+id/btnMenu"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
