@@ -29,8 +29,6 @@ import androidx.lifecycle.lifecycleScope
 import com.wisp.model.ConfigItem
 import com.wisp.network.HttpClient
 import com.wisp.network.InternetChecker
-import com.wisp.network.NetworkMonitor
-import com.wisp.network.NetworkType
 import com.wisp.network.SubscriptionFetcher
 import com.wisp.repository.ConfigRepository
 import com.wisp.update.AutoRefreshPolicy
@@ -40,6 +38,7 @@ import com.wisp.utils.HtmlParser
 import com.wisp.utils.ThemeManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -58,6 +57,14 @@ class MainActivity : AppCompatActivity() {
     companion object {
         /** Пакеты предыдущих версий приложения (до переименования пакета) */
         private val LEGACY_PACKAGES = arrayOf("com.example.wisp", "com.example.wisp.debug")
+
+        /**
+         * Забирает текст страницы из WebView. Кроме <pre>/<code>/<textarea>
+         * (туда Chrome кладёт text/plain) используется body.innerText —
+         * он покрывает HTML-страницы, отрисованные скриптами.
+         */
+        private const val EXTRACT_PAGE_JS =
+            "(function(){var p=[];document.querySelectorAll('pre,code,textarea').forEach(function(e){p.push(e.value!==undefined?e.value:e.textContent);});if(p.length===0&&document.body){p.push(document.body.innerText);}return p.join('\\n');})()"
     }
 
     private lateinit var updateManager: ForegroundUpdateManager
@@ -70,6 +77,8 @@ class MainActivity : AppCompatActivity() {
     private val internetChecker by lazy { InternetChecker(HttpClient.client) }
     private val subscriptionFetcher by lazy { SubscriptionFetcher(HttpClient.client) }
     private var autoRefreshJob: Job? = null
+    private var autoRefreshLoop: Job? = null
+    private var isForeground = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     private val webViewBackCallback = object : OnBackPressedCallback(false) {
@@ -277,10 +286,13 @@ class MainActivity : AppCompatActivity() {
                 // Фиксируем конфиг на момент загрузки: колбэк может прийти позже,
                 // чем пользователь переключится на другой конфиг
                 val loadedConfig = currentConfig ?: return
-                val js = "(function(){var p=[];document.querySelectorAll('pre,code,textarea').forEach(function(e){p.push(e.value!==undefined?e.value:e.textContent);});if(p.length===0&&document.body){p.push(document.body.innerText);}return p.join('\\n');})()"
-                view?.evaluateJavascript(js) { html ->
-                    if (currentConfig === loadedConfig && html != null) {
-                        loadedConfig.rawContent = HtmlParser.unescapeHtml(html)
+                view?.evaluateJavascript(EXTRACT_PAGE_JS) { html ->
+                    if (currentConfig !== loadedConfig) return@evaluateJavascript
+                    val content = HtmlParser.unescapeHtml(html ?: "")
+                    // Для text/plain-страниц WebView не исполняет JS и возвращает null,
+                    // поэтому пустой результат просто игнорируем — текст скачается при сохранении.
+                    if (HtmlParser.extractVpnUrls(content).isNotEmpty()) {
+                        loadedConfig.rawContent = content
                     }
                 }
             }
@@ -291,27 +303,78 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveAndCopyPage() {
-        val config = currentConfig
-        val content = config?.rawContent ?: run {
+        val config = currentConfig ?: run {
             Toast.makeText(this, "Ошибка: страница не загружена. Проверьте интернет.", Toast.LENGTH_LONG).show()
             return
         }
-        val urls = HtmlParser.extractVpnUrls(content)
-        if (urls.isNotEmpty()) {
-            val result = urls.joinToString("\n")
-            config.rawContent = result
-            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("vpn_urls", result))
-            val now = java.util.Date()
-            config.lastUpdate = now
-            configRepository.saveConfigs(configs)
-            currentConfigView?.findViewById<TextView>(R.id.tvDate)?.text = "Обновлено: ${DateUtils.formatDate(now)}"
-            currentConfigView?.findViewById<TextView>(R.id.tvRelativeTime)?.text = DateUtils.getRelativeTime(now)
-            exitWebView()
-            Toast.makeText(this, "Извлечено ссылок: ${urls.size}", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(this, "VPN ссылки не найдены", Toast.LENGTH_SHORT).show()
+        btnDone.isEnabled = false
+        // Сначала пробуем DOM: для обычных HTML-страниц (в том числе через Яндекс) этого достаточно.
+        webView.evaluateJavascript(EXTRACT_PAGE_JS) { html ->
+            if (currentConfig !== config) {
+                btnDone.isEnabled = true
+                return@evaluateJavascript
+            }
+            val fromPage = HtmlParser.unescapeHtml(html ?: "")
+            if (HtmlParser.extractVpnUrls(fromPage).isNotEmpty()) {
+                btnDone.isEnabled = true
+                savePageUrls(config, fromPage)
+            } else {
+                // text/plain-страницы WebView показывает встроенным просмотрщиком:
+                // JS там запрещён, evaluateJavascript возвращает null, DOM пуст.
+                // Поэтому тот же адрес скачиваем напрямую и парсим как обычный текст.
+                fetchAndSave(config, webView.url)
+            }
         }
+    }
+
+    private fun fetchAndSave(config: ConfigItem, pageUrl: String?) {
+        lifecycleScope.launch {
+            // Сначала исходная ссылка конфига: она отдаёт файл напрямую.
+            // Прокси-страница Яндекса (turbopages) не принимает запросы
+            // от не-браузера (403) и годится только как последний вариант.
+            val candidates = listOfNotNull(
+                config.url,
+                pageUrl?.takeIf { it.startsWith("http", ignoreCase = true) && it != config.url }
+            )
+            for (target in candidates) {
+                val body = subscriptionFetcher.fetchDirect(target).getOrNull() ?: continue
+                val urls = HtmlParser.extractVpnUrls(body)
+                if (urls.isNotEmpty()) {
+                    btnDone.isEnabled = true
+                    savePageUrls(config, body)
+                    return@launch
+                }
+            }
+            btnDone.isEnabled = true
+            if (currentConfig === config) {
+                Toast.makeText(this@MainActivity, "VPN ссылки не найдены", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun savePageUrls(config: ConfigItem, freshContent: String) {
+        var content = freshContent
+        var urls = HtmlParser.extractVpnUrls(content)
+        if (urls.isEmpty()) {
+            content = config.rawContent ?: ""
+            urls = HtmlParser.extractVpnUrls(content)
+        }
+        if (urls.isEmpty()) {
+            Toast.makeText(this, "VPN ссылки не найдены", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val result = urls.joinToString("\n")
+        config.rawContent = result
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("vpn_urls", result))
+        val now = java.util.Date()
+        config.lastUpdate = now
+        configRepository.saveConfigs(configs)
+        currentConfigView?.findViewById<TextView>(R.id.tvDate)?.text = "Обновлено: ${DateUtils.formatDate(now)}"
+        currentConfigView?.findViewById<TextView>(R.id.tvRelativeTime)?.text = DateUtils.getRelativeTime(now)
+        exitWebView()
+        Toast.makeText(this, "Извлечено ссылок: ${urls.size}", Toast.LENGTH_SHORT).show()
     }
 
     private fun exitWebView() {
@@ -457,6 +520,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        isForeground = true
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
@@ -469,11 +533,16 @@ class MainActivity : AppCompatActivity() {
         }
         networkCallback = callback
         cm.registerDefaultNetworkCallback(callback)
+        startAutoRefreshLoop()
+        // При открытии приложения сразу проверяем, не прошло ли 15 минут
         scheduleAutoRefresh()
     }
 
     override fun onStop() {
-        autoRefreshJob?.cancel()
+        isForeground = false
+        // Таймер автообновления НЕ отменяем: подписки обновляются и когда
+        // приложение просто висит в списке недавних. Он живёт, пока жив процесс,
+        // и умирает вместе с активностью, когда приложение закрывают полностью.
         networkCallback?.let {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             cm.unregisterNetworkCallback(it)
@@ -490,17 +559,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private suspend fun runAutoRefresh() {
-        if (NetworkMonitor.getType(this) != NetworkType.WIFI) {
-            Log.d("WispAuto", "skip: not wifi")
-            return
+    /** Раз в 15 минут, пока приложение живо — на экране или в списке недавних. */
+    private fun startAutoRefreshLoop() {
+        if (autoRefreshLoop?.isActive == true) return
+        autoRefreshLoop = lifecycleScope.launch {
+            while (isActive) {
+                delay(AutoRefreshPolicy.MIN_INTERVAL_MS)
+                runAutoRefresh()
+            }
         }
+    }
+
+    private suspend fun runAutoRefresh() {
+        // Обновляем при любом интернете — Wi-Fi или мобильном.
+        // Но сначала проверяем ссылкой, что сеть реально работает:
+        // «сеть есть» и «интернет доступен» — не одно и то же.
         if (!internetChecker.isAvailable()) {
             Log.d("WispAuto", "skip: probe failed")
             return
         }
-        updateManager.checkForUpdate(lifecycleScope) { tag, url, changelog ->
-            showUpdateDialog(tag, url, changelog)
+        if (isForeground) {
+            updateManager.checkForUpdate(lifecycleScope) { tag, url, changelog ->
+                showUpdateDialog(tag, url, changelog)
+            }
         }
         if (!AutoRefreshPolicy.isDue(configRepository.getLastAutoRefresh(), System.currentTimeMillis())) {
             return
