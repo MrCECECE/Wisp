@@ -63,9 +63,9 @@
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_refresh"
+                android:src="@drawable/ic_github"
                 android:contentDescription="Обновить напрямую"
-                android:tint="@color/icon_tint"
+                android:tint="@color/text_secondary"
                 android:scaleType="centerInside" />
 
             <ImageButton
@@ -73,9 +73,9 @@
                 android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_refresh"
+                android:src="@drawable/ic_yandex"
                 android:contentDescription="Обновить через Яндекс Переводчик"
-                android:tint="@color/icon_tint"
+                android:padding="6dp"
                 android:scaleType="centerInside" />
 
             <ImageButton
