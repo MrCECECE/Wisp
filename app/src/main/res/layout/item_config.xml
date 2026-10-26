@@ -15,88 +15,95 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="16dp"
-        android:gravity="center_vertical">
+        android:orientation="vertical"
+        android:padding="16dp">
 
-        <!-- Левая часть -->
-        <LinearLayout
-            android:layout_width="0dp"
+        <!-- Название во всю ширину карточки -->
+        <TextView
+            android:id="@+id/tvName"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:textAppearance="?attr/textAppearanceSubtitle1"
+            android:textColor="@color/text_primary"
+            android:maxLines="2"
+            android:ellipsize="end" />
 
-            <TextView
-                android:id="@+id/tvName"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textAppearance="?attr/textAppearanceSubtitle1"
-                android:textColor="@color/text_primary"
-                android:maxLines="1"
-                android:ellipsize="end" />
-
-            <TextView
-                android:id="@+id/tvDate"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textAppearance="?attr/textAppearanceBody2"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvRelativeTime"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textAppearance="?attr/textAppearanceCaption"
-                android:textColor="@color/hydrangea_purple" />
-        </LinearLayout>
-
-        <!-- Правая часть: кнопки -->
         <LinearLayout
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
-            <ImageButton
-                android:id="@+id/btnRefreshDirect"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_github"
-                android:contentDescription="Обновить напрямую"
-                android:tint="@color/text_secondary"
-                android:scaleType="centerInside" />
+            <!-- Даты слева -->
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-            <ImageButton
-                android:id="@+id/btnRefreshProxy"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_yandex"
-                android:contentDescription="Обновить через Яндекс Переводчик"
-                android:padding="6dp"
-                android:scaleType="centerInside" />
+                <TextView
+                    android:id="@+id/tvDate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textAppearance="?attr/textAppearanceBody2"
+                    android:textColor="@color/text_secondary" />
 
-            <ImageButton
-                android:id="@+id/btnCopyUrls"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_content_copy"
-                android:contentDescription="Скопировать ссылки"
-                android:tint="@color/icon_tint"
-                android:scaleType="centerInside" />
+                <TextView
+                    android:id="@+id/tvRelativeTime"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:textAppearance="?attr/textAppearanceCaption"
+                    android:textColor="@color/hydrangea_purple" />
+            </LinearLayout>
 
-            <ImageButton
-                android:id="@+id/btnMenu"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:background="?attr/selectableItemBackgroundBorderless"
-                android:src="@drawable/ic_more_vert"
-                android:contentDescription="Меню"
-                android:tint="@color/icon_tint"
-                android:scaleType="centerInside" />
+            <!-- Кнопки справа -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageButton
+                    android:id="@+id/btnRefreshDirect"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_github"
+                    android:contentDescription="Обновить напрямую"
+                    android:scaleType="centerInside" />
+
+                <ImageButton
+                    android:id="@+id/btnRefreshProxy"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_yandex"
+                    android:contentDescription="Обновить через Яндекс Переводчик"
+                    android:padding="6dp"
+                    android:scaleType="centerInside" />
+
+                <ImageButton
+                    android:id="@+id/btnCopyUrls"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_content_copy"
+                    android:contentDescription="Скопировать ссылки"
+                    android:tint="@color/icon_tint"
+                    android:scaleType="centerInside" />
+
+                <ImageButton
+                    android:id="@+id/btnMenu"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_more_vert"
+                    android:contentDescription="Меню"
+                    android:tint="@color/icon_tint"
+                    android:scaleType="centerInside" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 
